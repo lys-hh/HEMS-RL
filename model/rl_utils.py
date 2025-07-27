@@ -5,7 +5,6 @@ import torch
 import collections
 import random
 
-from curriculum import CurriculumWrapper
 from interface import DataInterface
 from environment import HomeEnergyManagementEnv
 

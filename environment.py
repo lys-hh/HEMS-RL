@@ -65,8 +65,8 @@ class HomeEnergyManagementEnv:
         }
         self.current_time = '2011-07-03'
         self.current_time_index = 0
-        self.data_interface = DataInterface('../data/daily_pivot_cons_2011-2012.csv',
-                                            '../data/daily_pivot_prod_2011-2012.csv')
+        self.data_interface = DataInterface('data/daily_pivot_cons_2011-2012.csv',
+                                            'data/daily_pivot_prod_2011-2012.csv')
         self.current_ev_power = 0
         self.current_battery_power = 0
 
@@ -322,6 +322,25 @@ class HomeEnergyManagementEnv:
         return self.state
 
     def step(self, state, action):
+        # === 动作物理裁剪，保证环境物理合理性 ===
+        # --- 储能电池功率裁剪 ---
+        ess_soc = state['ess_state']
+        if action['battery_power'] < 0:  # 放电
+            max_discharge = min(abs(action['battery_power']), ess_soc / 0.5 * self.discharge_efficiency)
+            action['battery_power'] = -max_discharge
+        elif action['battery_power'] > 0:  # 充电
+            max_charge = min(action['battery_power'], (self.ess_capacity - ess_soc) / 0.5 / self.charge_efficiency)
+            action['battery_power'] = max_charge
+
+        # --- 电动汽车功率裁剪 ---
+        ev_soc = state['ev_battery_state']
+        if action['ev_power'] < 0:  # 放电
+            max_discharge = min(abs(action['ev_power']), ev_soc / 0.5 * self.discharge_efficiency)
+            action['ev_power'] = -max_discharge
+        elif action['ev_power'] > 0:  # 充电
+            max_charge = min(action['ev_power'], (self.ev_capacity - ev_soc) / 0.5 / self.charge_efficiency)
+            action['ev_power'] = max_charge
+
         self.current_ev_power=action['ev_power']  # 存储当前动作
         current_dt = datetime.strptime(self.current_time, '%Y-%m-%d') + \
                      timedelta(minutes=30 * self.current_time_index)
@@ -818,6 +837,20 @@ class HomeEnergyManagementEnv:
                 + self.temp_weight * temp_reward
         )
 
+        # === 软约束reward shaping（只在PPO-Lagrangian模式下生效） ===
+        if hasattr(self, 'constraint_mode') and self.constraint_mode == 'lagrangian':
+            # 目标违反率，建议在主循环中动态赋值给self.target_violation_rate
+            target_violation_rate = getattr(self, 'target_violation_rate', 0.2)
+            # ESS软约束惩罚
+            soc = state['ess_state'] / self.ess_capacity
+            ess_violation = max(0, 0.2 - soc) + max(0, soc - 0.8)
+            # EV软约束惩罚
+            ev_soc = state['ev_battery_state'] / self.ev_capacity
+            ev_violation = max(0, 0.2 - ev_soc) + max(0, ev_soc - 0.8)
+            # 动态惩罚系数（目标违反率越低，惩罚越大）
+            penalty_coef = 200 * (1 - target_violation_rate)  # 可根据实验调整
+            reward -= penalty_coef * (ess_violation + ev_violation)
+
         # # 新增探索奖励（防止早熟）
         # if np.random.rand() < 0.1:  # 10%概率添加噪声
         #     reward += np.random.normal(0, 5)
@@ -1067,7 +1100,7 @@ class HomeEnergyManagementEnv:
         ax1.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
         # ===== 第二个画布：ESS充放电功率、光伏发电与电价变化图 =====
         plt.figure(figsize=(20, 10))
@@ -1156,7 +1189,7 @@ class HomeEnergyManagementEnv:
         ax2_2.legend([bars], ['ESS SOC'], loc='upper left')
 
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
         # ===== 第三个画布：空调功率变化图和温度变化图 =====
         plt.figure(figsize=(20, 10))
@@ -1197,7 +1230,7 @@ class HomeEnergyManagementEnv:
         ax3_2.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
         # ===== 第四个画布：第二台空调功率变化图和温度变化图 =====
         plt.figure(figsize=(20, 10))
@@ -1238,7 +1271,7 @@ class HomeEnergyManagementEnv:
         ax4_2.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
         # ===== 第五个画布：洗衣机状态图 =====
         plt.figure(figsize=(20, 5))
@@ -1292,7 +1325,7 @@ class HomeEnergyManagementEnv:
         ax5.set_xlim(mpl_dates[0], mpl_dates[-1])
 
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
         # ===== 第六个画布：热水器状态 =====
         plt.figure(figsize=(20, 10))
@@ -1352,7 +1385,7 @@ class HomeEnergyManagementEnv:
         # 添加图例
         ax6_1.legend()
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
         # ===== 第七个画布：家庭总负载变化图 =====
         plt.figure(figsize=(20, 5))
@@ -1384,7 +1417,7 @@ class HomeEnergyManagementEnv:
                          color='green', alpha=0.3)
 
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
         # ===== 第8个画布：成本随时间变化的图 =====
         plt.figure(figsize=(20, 5))
@@ -1403,7 +1436,7 @@ class HomeEnergyManagementEnv:
         ax8.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
         # 新增：保存成本数据到文件
         self.save_cost_data()
@@ -1452,7 +1485,7 @@ class HomeEnergyManagementEnv:
         plt.legend(loc='upper left', bbox_to_anchor=(1, 1))
         plt.grid(alpha=0.3)
         plt.tight_layout()
-        plt.show()
+        # plt.show()
 
     def plot_ewh_analysis(self):
         # 新增功率-温度相位图

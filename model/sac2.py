@@ -265,6 +265,9 @@ def train_enhanced_sac(env, episodes=500, batch_size=1024, buffer_size=1e6, min_
         episode_reward = 0
         done = False
 
+        ac1_temp_comforts = []
+        ac2_temp_comforts = []
+        ewh_temp_comforts = []
         while not done:
             # 生成并执行动作
             action = agent.select_action(state_to_vector(state))
@@ -325,18 +328,61 @@ def train_enhanced_sac(env, episodes=500, batch_size=1024, buffer_size=1e6, min_
             episode_reward += reward
             state = next_state
 
+            temp_diff1 = abs(state['indoor_temp'] - state['user_temp_preference'])
+            temp_diff2 = abs(state['indoor_temp2'] - state['user_temp_preference2'])
+            temp_comfort1 = max(0, 1 - max(0, temp_diff1 - 2) / 8)
+            temp_comfort2 = max(0, 1 - max(0, temp_diff2 - 2) / 8)
+            ac1_temp_comforts.append(temp_comfort1)
+            ac2_temp_comforts.append(temp_comfort2)
+            ewh_temp = state['ewh_temp']
+            hour = int(state['time_index'] // 2)
+            if 6 <= hour <= 9 or 18 <= hour <= 22:
+                low_temp, high_temp = 50, 60
+            else:
+                low_temp, high_temp = 40, 50
+            if low_temp <= ewh_temp <= high_temp:
+                ewh_temp_comfort = 1.0
+            else:
+                deviation = max(low_temp - ewh_temp, ewh_temp - high_temp)
+                ewh_temp_comfort = max(0, 1 - deviation / 10)
+            ewh_temp_comforts.append(ewh_temp_comfort)
+
+        ac1_temp_comfort = np.mean(ac1_temp_comforts) if ac1_temp_comforts else 0
+        ac2_temp_comfort = np.mean(ac2_temp_comforts) if ac2_temp_comforts else 0
+        ewh_temp_comfort = np.mean(ewh_temp_comforts) if ewh_temp_comforts else 0
+
         returns.append(episode_reward)
         print(f"Episode {episode + 1}/{episodes} | Reward: {episode_reward:.1f}")
 
-        # 每50轮可视化一次
-        if (episode + 1) % 500 == 0:
-            plot_episode_returns(returns)
-            env.plot_reward_components()
 
     # 最终可视化
     env.visualize()
     plot_episode_returns(returns)
     env.plot_reward_components()
+    
+    # ========== 新增：训练结束后保存模型参数 ========== 
+    model_save_dict = {
+        'actor_state_dict': agent.actor.state_dict(),
+        'critic_state_dict': agent.critic.state_dict(),
+        'target_critic_state_dict': agent.target_critic.state_dict(),
+        'actor_optimizer_state_dict': agent.actor_optim.state_dict(),
+        'critic_optimizer_state_dict': agent.critic_optim.state_dict(),
+        'log_alpha': agent.log_alpha.detach().cpu().numpy(),
+        'alpha_optimizer_state_dict': agent.alpha_optim.state_dict(),
+        'training_config': {
+            'state_dim': agent.actor.net[0].in_features,
+            'action_dim': agent.actor.mean.out_features,
+            'hidden_dim': agent.actor.net[0].out_features,
+            'gamma': agent.gamma,
+            'tau': agent.tau,
+            # 可根据需要补充其他训练参数
+        }
+    }
+    import os
+    os.makedirs('saved_models', exist_ok=True)
+    torch.save(model_save_dict, 'saved_models/sac2_model.pth')
+    print('模型已保存到: saved_models/sac2_model.pth')
+    
     return returns
 
 

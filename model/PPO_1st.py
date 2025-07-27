@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.nn.utils.clip_grad import clip_grad_norm_
 
 from environment import HomeEnergyManagementEnv
 from plt import plot_returns
@@ -79,15 +80,7 @@ class ValueNet(nn.Module):
 class HomeEnergyPPO:
     def __init__(self, env, state_dim, hidden_dim, action_space_config,
                  gamma=0.96, lmbda=0.98, eps=0.2, epochs=4,
-                 ent_coef=0.1, max_grad_norm=5, device=device, constraint_config=None):
-
-        # 处理约束配置
-        if constraint_config is None:
-            constraint_config = {
-                'use_constraint': False,  # False表示不使用约束
-                'lambda_lr': 1e-4
-            }
-        self.constraint_config = constraint_config.copy()  # 防止外部修改
+                 ent_coef=0.1, max_grad_norm=5, device=device, constraint_config=None, constraint_mode="none"):
 
         # 创建动作映射表
         self.action_mapping = {
@@ -120,14 +113,12 @@ class HomeEnergyPPO:
         self.actor_scheduler = CosineAnnealingLR(self.actor_optim, T_max=5000)
         self.critic_scheduler = CosineAnnealingLR(self.critic_optim, T_max=5000)
 
-        if self.constraint_config['use_constraint']:
-            # 约束相关参数
-            self.ess_capacity = env.ess_capacity  # 从环境获取ESS容量
-            self.ev_capacity = env.ev_capacity  # 从环境获取EV容量
-            self.lambda_ess = torch.tensor(1.0, requires_grad=True, device=device)
-            self.lambda_ev = torch.tensor(1.0, requires_grad=True, device=device)
-            self.lambda_optim = torch.optim.Adam([self.lambda_ess, self.lambda_ev],
-                                                 lr=self.constraint_config['lambda_lr'])
+        self.constraint_mode = constraint_mode
+        if constraint_config is None:
+            constraint_config = {
+                'lambda_lr': 1e-4
+            }
+        self.constraint_config = constraint_config.copy()
 
         # # 熵相关参数
         self.target_entropy = np.mean([
@@ -144,6 +135,12 @@ class HomeEnergyPPO:
         self.ent_coef = ent_coef
         self.max_grad_norm = max_grad_norm
         self.device = device
+
+        if self.constraint_mode == "lagrangian":
+            self.ess_capacity = env.ess_capacity
+            self.ev_capacity = env.ev_capacity
+            self.lambda_ess = torch.tensor(self.constraint_config.get('lambda_init', 1.0), requires_grad=False, device=device)
+            self.lambda_ev = torch.tensor(self.constraint_config.get('lambda_init', 1.0), requires_grad=False, device=device)
 
     def take_action(self, state_tensor, action_mask=None):
         shared_features = self.shared_backbone(state_tensor)
@@ -287,7 +284,7 @@ class HomeEnergyPPO:
 
             # ==================== 约束处理（条件执行）====================
             constraint_loss = torch.tensor(0.0, device=device)
-            if self.constraint_config['use_constraint']:
+            if self.constraint_mode == "lagrangian":
                 # 约束违反计算
                 ess_states = states[:, 2]
                 ev_states = states[:, 3]
@@ -321,8 +318,6 @@ class HomeEnergyPPO:
             # 梯度清零
             self.actor_optim.zero_grad()
             self.critic_optim.zero_grad()
-            if self.constraint_config['use_constraint']:
-                self.lambda_optim.zero_grad()
 
             # 反向传播（单次）
             total_loss.backward()
@@ -334,12 +329,6 @@ class HomeEnergyPPO:
             # 参数更新
             self.actor_optim.step()
             self.critic_optim.step()
-
-            # 约束相关更新（条件执行）
-            if self.constraint_config['use_constraint']:
-                self.lambda_optim.step()
-                self.lambda_ess.data.clamp_(min=0)
-                self.lambda_ev.data.clamp_(min=0)
 
             self.actor_scheduler.step()
             self.critic_scheduler.step()

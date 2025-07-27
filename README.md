@@ -1,233 +1,254 @@
-# 家庭能源管理系统 (HEMS) - 强化学习项目
+# HEMS (Home Energy Management System) - 强化学习项目
 
 ## 项目概述
 
-这是一个基于强化学习的家庭能源管理系统，旨在优化家庭用电成本、提高能源利用效率，并满足用户舒适度需求。系统集成了电动汽车充电、储能电池管理、洗衣机调度、空调控制和热水器管理等功能。
+本项目使用强化学习技术（PPO算法）来优化家庭能源管理系统，实现智能化的能源调度和成本优化。
 
-## 项目架构
+## 最新改进 (PPO_3rd.py)
 
-### 核心组件
+### 约束训练问题修复
 
-1. **环境模块** (`environment.py`)
-   - 家庭能源管理环境模拟器
-   - 包含所有设备的物理模型和状态转换逻辑
-   - 提供奖励计算和约束处理
+#### 问题分析
+从训练数据发现以下关键问题：
+1. **Lambda值固定**：最后lambda值都固定在10.0，说明约束更新机制有问题
+2. **违反率过高**：ESS和EV的违反率都在40-60%之间，远高于目标
+3. **回报异常**：初期回报极差（-1145），说明约束过于严格
 
-2. **强化学习算法** (`model/`目录)
-   - PPO (Proximal Policy Optimization) - 主要算法
-   - SAC (Soft Actor-Critic)
-   - TD3 (Twin Delayed DDPG)
-   - DQN (Deep Q-Network)
+#### 修复措施
 
-3. **数据处理** (`data/`目录)
-   - 历史用电数据
-   - 光伏发电数据
-   - 电价数据
+##### 1. 移除冲突的Lambda更新机制
+- **问题**：存在两套lambda更新逻辑（约束更新 + lambda缓冲机制），导致冲突
+- **解决**：移除lambda缓冲机制，只保留约束更新逻辑
+- **效果**：确保lambda能正常变化，避免固定值
 
-4. **可视化工具** (`plt.py`)
-   - 训练过程可视化
-   - 结果分析和图表生成
+##### 2. 优化约束目标策略
+```python
+# 更合理的渐进策略
+if episode < 500:
+    target_violation_amount = 0.25  # 早期：允许25%违反
+elif episode < 1500:
+    target_violation_amount = 0.20  # 中期：降低到20%
+elif episode < 2500:
+    target_violation_amount = 0.15  # 后期：降低到15%
+elif episode < 3500:
+    target_violation_amount = 0.12  # 后期：降低到12%
+else:
+    target_violation_amount = 0.10  # 最终：控制在10%
+```
 
-## 设备模型
+##### 3. 调整约束配置参数
+```python
+constraint_config = {
+    'soc_lower': 0.2,  # SOC下界20%
+    'soc_upper': 0.8,  # SOC上界80%
+    'lambda_init': 0.5,  # 降低初始值，避免过度惩罚
+    'lambda_max': 15.0,  # 降低最大值，避免过度惩罚
+    'dual_ascent_rate': 0.01,  # 降低更新率，更稳定
+    'constraint_weight': 2.0,  # 降低早期权重
+    'final_constraint_weight': 0.5  # 降低最终权重
+}
+```
 
-### 1. 电动汽车 (EV)
-- **容量**: 24 kWh
-- **充放电功率**: -6.6 到 6.6 kW
-- **效率**: 95%
-- **约束**: 离家时最低电量要求
+##### 4. 优化Lambda更新策略
+```python
+# 更温和的更新策略
+adaptive_rate = 0.01 / (1 + 0.001 * episode)  # 降低学习率
+kp = 0.05   # 降低比例系数
+ki = 0.005  # 降低积分系数
+```
 
-### 2. 储能电池 (ESS)
-- **容量**: 24 kWh
-- **充放电功率**: -4.4 到 4.4 kW
-- **效率**: 95%
-- **SOC约束**: 10% - 90%
+##### 5. 调整动态约束权重
+```python
+# 更温和的权重策略
+if episode < 1000:
+    constraint_weight = 2.0  # 早期：中等约束权重
+elif episode < 2000:
+    constraint_weight = 1.5  # 中期：降低约束权重
+elif episode < 3000:
+    constraint_weight = 1.0  # 后期：进一步降低约束权重
+else:
+    constraint_weight = 0.5  # 最终：最小约束权重
+```
 
-### 3. 洗衣机
-- **功率**: 1.5 kW
-- **运行时长**: 1小时
-- **调度选项**: 0-6 (不同时间段)
+### 预期改进效果
 
-### 4. 空调系统
-- **功率范围**: 0-5 kW
-- **温度设定**: 16-30°C
-- **舒适度模型**: 基于用户偏好温度
+1. **Lambda正常变化**：移除冲突机制后，lambda值应该能正常调整
+2. **违反率降低**：更合理的约束目标应该能将违反率控制在10-25%
+3. **回报提升**：更温和的约束策略应该能显著提升初期回报
+4. **训练稳定性**：降低学习率和权重应该能提高训练稳定性
 
-### 5. 热水器 (EWH)
-- **容量**: 100L
-- **温度范围**: 30-100°C
-- **功率**: 0-2 kW
-- **用户用水模型**: 随机分布
+## 项目结构
 
-## 状态空间
+```
+HEMS_project/
+├── model/
+│   ├── PPO_1st.py      # 基础PPO实现
+│   ├── PPO_2nd.py      # 改进版PPO
+│   ├── PPO_3rd.py      # 旗舰版PPO（当前使用）
+│   ├── sac.py          # SAC算法实现
+│   ├── sac2.py         # SAC改进版
+│   └── TD3.py          # TD3算法实现
+│   ├── dqn.py          # DQN多分支算法实现
+│   ├── ddpg.py         # DDPG连续控制算法实现
+├── environment.py       # 家庭能源管理环境
+├── interface.py         # 用户界面
+├── plt.py              # 绘图工具
+├── model_evaluation.py  # 模型评估
+└── README.md           # 项目说明
+```
 
-系统状态包含以下维度：
-- 家庭用电负荷
-- 光伏发电量
-- ESS电池状态
-- EV电池状态
-- 时间索引
-- 电价
-- 室外温度
-- 洗衣机状态
-- 空调功率
-- 热水器温度和功率
+## 核心功能
 
-## 动作空间
+### 1. 智能能源调度
+- **电动汽车充放电**：根据电价和需求智能调度
+- **储能电池管理**：优化充放电时机
+- **家电调度**：洗衣机、空调等设备的智能调度
+- **热水器控制**：根据用水需求优化加热策略
 
-### 离散动作
-- **EV充放电功率**: [-6.6, -3.3, 0, 3.3, 6.6] kW
-- **ESS充放电功率**: [-4.4, -2.2, 0, 2.2, 4.4] kW
-- **洗衣机调度**: [0, 1, 2, 3, 4, 5, 6] (时间段)
-- **空调设定温度**: [16, 18, 20, 22, 24, 26, 28, 30] °C
-- **热水器设定温度**: [40, 45, 50, 55, 60, 65, 70] °C
+### 2. 约束优化
+- **SOC约束**：确保电池SOC在安全范围内（20%-80%）
+- **功率约束**：限制充放电功率
+- **温度舒适度**：保证用户温度舒适度
+- **成本优化**：最小化能源成本
 
-## 奖励函数
+### 3. 算法特性
+- **PPO-Lagrangian**：支持约束强化学习
+- **状态归一化**：提高训练稳定性
+- **动态掩码**：确保动作有效性
+- **自动回滚**：防止训练崩溃
 
-### 主要组成部分
-1. **能源成本**: 基于分时电价的用电成本
-2. **约束惩罚**: 电池SOC、设备功率等约束违反惩罚
-3. **用户满意度**: 温度舒适度、设备使用便利性
-4. **能源效率**: 可再生能源利用率
+### 4. DQN多分支算法（dqn.py）
+- **多分支DQN**：适配多设备多动作空间，支持状态归一化、约束统计、经验回放、epsilon-greedy探索。
+- **用途**：为HEMS环境提供基于DQN的强化学习解决方案，适合离散动作空间。
 
-### 奖励权重
-- 能源成本权重: 0.5
-- 用户满意度权重: 0.5
-- 约束违反权重: 0.5
-- 温度舒适度权重: 0.1
+#### 运行方法
+```bash
+python model/dqn.py
+```
 
-## 算法特性
+#### 主要参数
+- `buffer_size`: 经验回放池大小（默认50000）
+- `batch_size`: 每次更新的批量大小（默认128）
+- `epsilon_start/epsilon_end/epsilon_decay`: 探索率参数
+- `gamma`: 折扣因子（默认0.96）
+- `tau`: 目标网络软更新系数（默认0.01）
+- `USE_STATE_NORMALIZATION`: 是否启用状态归一化
 
-### PPO算法改进
-1. **状态归一化**: 使用RunningStats进行在线状态归一化
-2. **动作掩码**: 基于物理约束的动态动作掩码
-3. **多分支网络**: 为不同设备设计独立的动作分支
-4. **自适应熵**: 动态调整探索策略
-5. **约束处理**: 可选的约束优化机制
+#### 监控指标
+- **ESS_Violation_Rate**: 储能SOC违反率
+- **EV_Violation_Rate**: 电动汽车SOC违反率
+- **Total_Violation_Rate**: 约束总违反率
+- **Energy_Cost**: 能源成本
+- **User_Satisfaction**: 用户满意度
+- **Temperature_Comfort**: 温度舒适度
+- **Loss**: DQN损失
+
+#### 结果输出
+- 训练过程数据保存在`results/returns_dqn_时间戳.csv`
+- 训练模型保存在`saved_models/dqn_model_时间戳.pth`
+- 支持训练过程可视化
+
+### 5. DDPG连续控制算法（ddpg.py）
+- **DDPG**：适配多设备多动作空间，支持连续动作输出、OU噪声探索、状态归一化、约束统计、经验回放。
+- **用途**：为HEMS环境提供基于DDPG的强化学习解决方案，适合连续动作空间。
+
+#### 运行方法
+```bash
+python model/ddpg.py
+```
+
+#### 主要参数
+- `buffer_size`: 经验回放池大小（默认100000）
+- `batch_size`: 每次更新的批量大小（默认128）
+- `lr_actor/lr_critic`: Actor/Critic学习率
+- `gamma`: 折扣因子（默认0.96）
+- `tau`: 目标网络软更新系数（默认0.005）
+- `USE_STATE_NORMALIZATION`: 是否启用状态归一化
+
+#### 监控指标
+- **ESS_Violation_Rate**: 储能SOC违反率
+- **EV_Violation_Rate**: 电动汽车SOC违反率
+- **Total_Violation_Rate**: 约束总违反率
+- **Energy_Cost**: 能源成本
+- **User_Satisfaction**: 用户满意度
+- **Temperature_Comfort**: 温度舒适度
+- **Actor_Loss**: 策略损失
+- **Critic_Loss**: 价值损失
+
+#### 结果输出
+- 训练过程数据保存在`results/returns_ddpg_时间戳.csv`
+- 训练模型保存在`saved_models/ddpg_model_时间戳.pth`
+- 支持训练过程可视化
 
 ## 使用方法
 
-### 环境要求
+### 训练模型
 ```bash
-pip install torch numpy matplotlib scipy pandas openpyxl
-```
-
-### 运行训练
-```python
-# 运行PPO训练
 python model/PPO_3rd.py
-
-# 运行SAC训练
-python model/sac.py
-
-# 运行TD3训练
-python model/TD3.py
 ```
 
-### 参数配置
-- **训练轮数**: 50 episodes
-- **学习率**: Actor 5e-6, Critic 3e-5
-- **折扣因子**: 0.96
-- **GAE参数**: 0.98
-- **PPO裁剪**: 0.2
+### 评估模型
+```bash
+python model_evaluation.py
+```
 
-## 结果分析
+### 可视化结果
+```bash
+python plt.py
+```
 
-### 输出文件
-- `results/returns_ppo_YYYYMMDD_HHMMSS.csv`: 训练回报数据
-- `model/cost_results/cost_data_YYYYMMDD_HHMMSS.csv`: 成本分析数据
-- `model/episode_cost_results/episode_costs_YYYYMMDD_HHMMSS.csv`: 每轮成本数据
+## 配置参数
 
-### 可视化图表
-1. **SOC变化图**: EV和ESS电池状态变化
-2. **电价对比图**: 分时电价与用电量关系
-3. **奖励分解图**: 各奖励组成部分分析
-4. **成本分析图**: 总成本和分项成本趋势
+### 约束配置
+- `soc_lower`: SOC下界（默认0.2）
+- `soc_upper`: SOC上界（默认0.8）
+- `lambda_init`: 初始拉格朗日乘子（默认0.5）
+- `lambda_max`: 最大拉格朗日乘子（默认15.0）
 
-## 代码问题说明
+### 训练配置
+- `num_episodes`: 训练轮数（默认5000）
+- `learning_rate`: 学习率（默认5e-6）
+- `gamma`: 折扣因子（默认0.96）
+- `eps`: PPO裁剪参数（默认0.2）
 
-### 关于Linter错误
+## 监控指标
 
-项目中出现的Linter错误主要是由于不同开发环境的类型检查严格程度不同：
+### 约束指标
+- **ESS_Violation_Rate**: ESS违反率
+- **EV_Violation_Rate**: EV违反率
+- **Lambda_ESS**: ESS拉格朗日乘子
+- **Lambda_EV**: EV拉格朗日乘子
 
-1. **类型转换错误** (第208行)
-   ```python
-   actions[name] = self.action_mapping[name][int(action_idx.item())]
-   ```
-   - **问题**: `action_idx.item()`返回`Number`类型，但字典索引期望`int`类型
-   - **原因**: PyTorch的`.item()`方法返回的是`Number`类型，在某些类型检查器中会被识别为`float`
-   - **解决方案**: 显式转换为int类型
-   - **为什么PyCharm不报错**: PyCharm的类型检查器配置更宽松，能够自动推断类型转换
+### 性能指标
+- **Return**: 总回报
+- **Energy_Cost**: 能源成本
+- **User_Satisfaction**: 用户满意度
+- **Peak_Valley_Arbitrage**: 峰谷套利效果
 
-2. **梯度裁剪错误** (第386-388行)
-   ```python
-   torch.nn.utils.clip_grad_norm_(self.shared_backbone.parameters(), self.max_grad_norm)
-   ```
-   - **问题**: `clip_grad_norm_`函数在某些PyTorch版本中可能不被正确识别
-   - **原因**: 
-     - PyTorch版本差异：不同版本的PyTorch API导出方式可能不同
-     - 类型检查器差异：某些linter可能无法正确识别PyTorch的动态导入
-   - **解决方案**: 使用try-except处理兼容性，支持不同版本的PyTorch
-   - **为什么PyCharm不报错**: PyCharm对PyTorch库有更好的支持，能够正确识别API
+### 训练指标
+- **Actor_Loss**: 策略损失
+- **Critic_Loss**: 价值损失
+- **Constraint_Loss**: 约束损失
+- **Training_Stability**: 训练稳定性
 
-### 为什么PyCharm中不报错
+## 注意事项
 
-1. **类型检查配置**: 
-   - PyCharm的类型检查可能配置为更宽松的模式
-   - 某些linter（如mypy）配置更严格，会报告更多潜在问题
+1. **约束训练**：当前使用PPO-Lagrangian方法，需要仔细调参
+2. **状态归一化**：建议启用以提高训练稳定性
+3. **动态权重**：约束权重会随训练进度动态调整
+4. **自动回滚**：当回报崩溃时会自动回滚到健康状态
 
-2. **PyTorch版本支持**: 
-   - PyCharm对PyTorch库有专门的支持和类型注解
-   - 不同版本的PyTorch可能有不同的类型注解质量
+## 更新日志
 
-3. **运行环境差异**: 
-   - 实际运行时Python解释器能够正确处理这些类型转换
-   - 静态类型检查器可能无法完全理解动态类型
+### 最新版本 (PPO_3rd.py)
+- ✅ 修复Lambda更新冲突问题
+- ✅ 优化约束目标策略
+- ✅ 调整约束配置参数
+- ✅ 改进动态权重策略
+- ✅ 简化训练逻辑
 
-4. **IDE集成**: 
-   - PyCharm作为专业Python IDE，对科学计算库有更好的支持
-   - 命令行linter可能缺乏对PyTorch等库的深度理解
-
-### 代码兼容性解决方案
-
-为了确保代码在不同环境中都能正常运行，我们采用了以下策略：
-
-1. **显式类型转换**: 使用`int()`确保类型安全
-2. **异常处理**: 使用try-except处理API兼容性问题
-3. **版本检查**: 在必要时检查PyTorch版本
-4. **文档说明**: 在README中详细说明可能的问题和解决方案
-
-### 建议的开发环境配置
-
-1. **PyCharm设置**: 
-   - 启用类型检查但设置为宽松模式
-   - 配置PyTorch库路径
-   - 使用项目解释器
-
-2. **命令行开发**: 
-   - 使用兼容的linter配置
-   - 忽略已知的PyTorch相关警告
-   - 定期运行测试确保功能正常
-
-3. **CI/CD**: 
-   - 在CI环境中使用相同的PyTorch版本
-   - 配置适当的linter规则
-   - 运行完整的测试套件
-
-## 性能优化建议
-
-1. **状态归一化**: 使用在线归一化提高训练稳定性
-2. **动作掩码**: 减少无效动作探索，提高学习效率
-3. **多设备协调**: 考虑设备间的相互影响
-4. **实时适应**: 根据用户行为模式动态调整策略
-
-## 未来改进方向
-
-1. **多目标优化**: 同时优化成本、舒适度和环保性
-2. **用户个性化**: 学习用户偏好并个性化策略
-3. **预测模型**: 集成天气和用电需求预测
-4. **分布式学习**: 多家庭协同学习
-5. **在线学习**: 实时适应环境变化
-
-## 联系方式
-
-如有问题或建议，请联系项目维护者。 
+### 待优化项目
+- [ ] 进一步优化约束目标
+- [ ] 改进Lambda更新策略
+- [ ] 增加更多监控指标
+- [ ] 优化回滚机制 
