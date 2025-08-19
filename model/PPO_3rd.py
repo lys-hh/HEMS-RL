@@ -3,6 +3,7 @@
 """
 import csv
 import os
+import sys
 from datetime import datetime
 
 import numpy as np
@@ -12,6 +13,10 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from environment import HomeEnergyManagementEnv
+# 添加evaluation目录到路径（使用相对路径）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(os.path.join(project_root, 'evaluation'))
 from plt import plot_returns
 import matplotlib
 matplotlib.use('Agg')
@@ -163,7 +168,7 @@ class HomeEnergyPPO:
             {'params': self.shared_backbone.parameters()},
             {'params': self.actor_branches.parameters()}
         ], lr=1e-5)  # 降低学习率
-        self.critic_optim = torch.optim.AdamW(self.critic.parameters(), lr=3e-5)  # 降低学习率
+        self.critic_optim = torch.optim.AdamW(self.critic.parameters(), lr=1e-5)  # 降低学习率
 
         # 学习率调度
         self.actor_scheduler = CosineAnnealingLR(self.actor_optim, T_max=1000, eta_min=3e-5)
@@ -440,7 +445,7 @@ class HomeEnergyPPO:
                 # 大幅增加约束损失权重
                 total_loss = actor_loss + 0.1 * critic_loss + 1.0 * constraint_loss
             else:
-                total_loss = actor_loss + 0.5 * critic_loss
+                total_loss = actor_loss + 0.1 * critic_loss
 
             # ==================== 统一梯度更新 ====================
             # 梯度清零
@@ -557,7 +562,7 @@ if __name__ == "__main__":
     episode_returns = []
 
     # 创建结果目录
-    results_dir = "results"
+    results_dir = "model/results"
     os.makedirs(results_dir, exist_ok=True)
 
     # 新增：创建一个长度为50的队列，保存最近50个episode的回报和模型参数
@@ -982,6 +987,13 @@ if __name__ == "__main__":
             # 在每个episode结束时记录总成本
             env.episode_costs.append(env.total_cost)
 
+            # ========== 保存模拟数据到CSV ==========
+            # 只保存最后50个episode的数据
+            if episode >= num_episodes - 50:
+                data_filename = f"simulation_data_episode_{episode + 1}.csv"
+                env.save_simulation_data(data_filename)
+                print(f"Episode {episode + 1}: 模拟数据已保存")
+
             # ========== episode结束，保存当前模型到recent_models队列 ==========
             model_snapshot = {
                 'episode': episode,
@@ -991,42 +1003,53 @@ if __name__ == "__main__":
                 'critic': agent.critic.state_dict(),
                 'actor_optimizer': agent.actor_optim.state_dict(),
                 'critic_optimizer': agent.critic_optim.state_dict(),
-                'action_mapping': agent.action_mapping,
-                'state_keys': state_keys,
+        'action_mapping': agent.action_mapping,
+        'state_keys': state_keys,
                 # 补全training_config字段，确保评估脚本兼容
-                'training_config': {
+        'training_config': {
                     'state_dim': len(env.state_space),  # 状态维度
                     'hidden_dim': 128,  # 隐藏层维度
                     'action_space_config': env.action_space,  # 动作空间配置
-                    'gamma': agent.gamma,
-                    'lmbda': agent.lmbda,
-                    'eps': agent.eps,
-                    'epochs': agent.epochs,
-                    'ent_coef': agent.ent_coef,
-                    'max_grad_norm': agent.max_grad_norm,
-                    'use_state_normalization': USE_STATE_NORMALIZATION,
+            'gamma': agent.gamma,
+            'lmbda': agent.lmbda,
+            'eps': agent.eps,
+            'epochs': agent.epochs,
+            'ent_coef': agent.ent_coef,
+            'max_grad_norm': agent.max_grad_norm,
+            'use_state_normalization': USE_STATE_NORMALIZATION,
                     'constraint_mode': CONSTRAINT_MODE,
                     'use_dynamic_mask': USE_DYNAMIC_MASK,
                     'constraint_config': agent.constraint_config.copy() if agent.constraint_mode == "lagrangian" else None
-                }
-            }
+        }
+    }
             # 如果使用了状态归一化，保存running_stats
-            if USE_STATE_NORMALIZATION and running_stats is not None:
-                model_snapshot['running_stats_mean'] = running_stats.mean.clone()
-                model_snapshot['running_stats_std'] = running_stats.std.clone()
-                model_snapshot['running_stats_count'] = running_stats.count
+    if USE_STATE_NORMALIZATION and running_stats is not None:
+            model_snapshot['running_stats_mean'] = running_stats.mean.clone()
+            model_snapshot['running_stats_std'] = running_stats.std.clone()
+            model_snapshot['running_stats_count'] = running_stats.count
             # 如果是lagrangian模式，保存lambda值
-            if CONSTRAINT_MODE == "lagrangian":
-                model_snapshot['lambda_ess'] = agent.lambda_ess.clone()
-                model_snapshot['lambda_ev'] = agent.lambda_ev.clone()
+    if CONSTRAINT_MODE == "lagrangian":
+            model_snapshot['lambda_ess'] = agent.lambda_ess.clone()
+            model_snapshot['lambda_ev'] = agent.lambda_ev.clone()
             # 关键：每个episode都要保存快照，保证recent_models不为空
-            recent_models.append(model_snapshot)
+    recent_models.append(model_snapshot)
 
     # 训练结束后保存成本数据
     env.save_episode_costs()
 
+    # ========== 训练结束后保存最终模拟数据 ==========
+    print("训练完成，保存最终模拟数据...")
+    final_data_filename = f"final_simulation_data_episode_{num_episodes}.csv"
+    env.save_simulation_data(final_data_filename)
+    print(f"最终模拟数据已保存: {final_data_filename}")
+
+    # ========== 生成最终可视化图片 ==========
+    print("生成最终可视化图片...")
+    env.visualize()
+    print("最终可视化图片已生成")
 
 # ***********************************************************************************
+
     # 保存训练好的模型
     # ==================== 训练结束后，保存最近50个episode中回报最高的模型 ====================
     # 在recent_models队列中找到回报（return）最高的那个
@@ -1048,15 +1071,15 @@ if __name__ == "__main__":
                 'running_stats_mean': best_model_snapshot['running_stats_mean'],
                 'running_stats_std': best_model_snapshot['running_stats_std'],
                 'running_stats_count': best_model_snapshot['running_stats_count'],
-            })
+        })
         if CONSTRAINT_MODE == "lagrangian" and 'lambda_ess' in best_model_snapshot:
             model_save_dict.update({
                 'lambda_ess': best_model_snapshot['lambda_ess'],
                 'lambda_ev': best_model_snapshot['lambda_ev'],
                 'constraint_config': best_model_snapshot['constraint_config']
-            })
+        })
         # 保存模型
-        model_save_dir = "saved_models"
+        model_save_dir = "model/saved_models"
         os.makedirs(model_save_dir, exist_ok=True)
         norm_suffix = "_norm" if USE_STATE_NORMALIZATION else "_no_norm"
         constraint_suffix = "_constrained" if CONSTRAINT_MODE == "lagrangian" else "_unconstrained"
@@ -1066,7 +1089,7 @@ if __name__ == "__main__":
     else:
         print("警告：没有可保存的模型快照！")
 
-    # **************************************************************************
+# **************************************************************************
 
     # 训练结束后关闭文件（with语句会自动关闭）
     env.visualize()

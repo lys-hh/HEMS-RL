@@ -10,6 +10,12 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.nn.utils.clip_grad import clip_grad_norm_
 
 from environment import HomeEnergyManagementEnv
+# 添加evaluation目录到路径（使用相对路径）
+import sys
+import os
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(os.path.join(project_root, 'evaluation'))
 from plt import plot_returns
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

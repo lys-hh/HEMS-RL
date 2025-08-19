@@ -1,7 +1,8 @@
 """
-DDPG连续控制解决方案，适配HEMS环境，仿照TD3/PPO_3rd.py结构
+DDPG连续控制解决方案，适配HEMS环境
 """
 import os
+import sys
 import csv
 import random
 from datetime import datetime
@@ -11,7 +12,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from collections import deque, OrderedDict
+
+# 添加项目根目录到Python路径（使用相对路径）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+
 from environment import HomeEnergyManagementEnv
+# 添加evaluation目录到路径
+sys.path.append(os.path.join(project_root, 'evaluation'))
 from plt import plot_returns
 import matplotlib
 matplotlib.use('Agg')
@@ -214,7 +223,7 @@ if __name__ == "__main__":
     num_episodes = 2000
     max_steps = 200
     episode_returns = []
-    results_dir = "results"
+    results_dir = "model/results"
     os.makedirs(results_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     norm_suffix = "_norm" if USE_STATE_NORMALIZATION else "_no_norm"
@@ -323,7 +332,7 @@ if __name__ == "__main__":
             file.flush()
             print(f"Episode {episode + 1}, Return: {episode_return:.2f}, Actor Loss: {actor_loss:.4f}, Critic Loss: {critic_loss:.4f}, Violation: {total_violation_rate:.3f}, Cost: {energy_cost:.2f}")
         # 保存模型
-        model_save_dir = "saved_models"
+        model_save_dir = "model/saved_models"
         os.makedirs(model_save_dir, exist_ok=True)
         model_filename = os.path.join(model_save_dir, f"ddpg_model_{timestamp}{norm_suffix}.pth")
         
@@ -357,7 +366,7 @@ if __name__ == "__main__":
         
         torch.save(model_save_dict, model_filename)
         print(f"模型已保存到: {model_filename}")
-    env.save_episode_costs()
+    # env.save_episode_costs()
     env.visualize()
     env.plot_reward_components()
     plot_returns(episode_returns)

@@ -11,7 +11,7 @@ from matplotlib.ticker import MaxNLocator
 from interface import DataInterface
 import csv  # 添加CSV模块
 import os   # 添加OS模块
-
+import pandas as pd
 
 class HomeEnergyManagementEnv:
     def __init__(self, ev_capacity=24, ess_capacity=24, charge_efficiency=0.95, discharge_efficiency=0.95):
@@ -22,11 +22,11 @@ class HomeEnergyManagementEnv:
         self.ev_min_charge = 12  # 设置 EV 离家时的最低电量需求
 
         # 初始化惩罚系数，实现动态调整
-        self.energy_weight = 0.5  # 电网成本权重
+        self.energy_weight = 0.1  # 电网成本权重
         self.user_satisfaction_weight0 = 0.5  # 用户不满意度权重
-        self.user_satisfaction_weight1 = 0.2  # 用户不满意度权重
+        self.user_satisfaction_weight1 = 0.5  #
         self.user_satisfaction_weight2 = 0.2
-        self.violation_weight = 0.5
+        self.violation_weight = 0.05
         self.temp_weight = 0.1
         self.ess_weight = 0.1  # 原1
         self.ev_weight = 0.1  # 原1
@@ -58,7 +58,7 @@ class HomeEnergyManagementEnv:
             'battery_power': (-4.4, -2.2, 0, 2.2, 4.4),  # 储能电池充电功率范围
 
             'wash_machine_schedule': (0, 1, 2, 3, 4, 5, 6),  # 洗衣机调度动作，0表示不运行，1表示运行
-            'Air_conditioner_set_temp': (16,18, 20, 22, 24, 26, 28, 30),  # 空调设定温度
+            'Air_conditioner_set_temp': (16, 18, 20, 22, 24, 26, 28, 30),  # 空调设定温度
             'Air_conditioner_set_temp2': (16, 18, 20, 22, 24, 26, 28, 30),
 
             'ewh_set_temp': (40, 45, 50, 55, 60, 65, 70)  # 离散温度设定动作
@@ -163,11 +163,6 @@ class HomeEnergyManagementEnv:
 
     def get_action_mask(self, state):
         """返回基于当前电量的动态动作掩码"""
-        # 获取动态SOC约束
-        dynamic_constraints = self.get_dynamic_soc_constraints(state)
-        ess_constraints = dynamic_constraints['ess']
-        ev_constraints = dynamic_constraints['ev']
-        
         masks = {
             'battery_power': [True] * len(self.action_space['battery_power']),
             'ev_power': [True] * len(self.action_space['ev_power'])
@@ -175,66 +170,38 @@ class HomeEnergyManagementEnv:
 
         delta_t = 0.5
 
-        # 1. ESS电池动作掩码 - 使用动态约束
+        # 1. ESS电池动作掩码 - 动态计算
         # 考虑放电效率（假设95%）
         max_discharge = (state['ess_state'] / delta_t) * 0.95
         max_charge = ((self.ess_capacity - state['ess_state']) / delta_t) / 0.95
         
-        # 添加SOC约束
-        current_soc = state['ess_state'] / self.ess_capacity
-        if current_soc <= ess_constraints['soc_lower']:
-            # SOC过低，禁止放电
-            for idx, action_value in enumerate(self.action_space['battery_power']):
-                if action_value < 0:
-                    masks['battery_power'][idx] = False
-        elif current_soc >= ess_constraints['soc_upper']:
-            # SOC过高，禁止充电
-            for idx, action_value in enumerate(self.action_space['battery_power']):
-                if action_value > 0:
-                    masks['battery_power'][idx] = False
-
-        # 物理功率约束
         for idx, action_value in enumerate(self.action_space['battery_power']):
             # 放电动作：只能选择小于等于当前可放电量的动作
             if action_value < 0 and abs(action_value) > max_discharge:
                 masks['battery_power'][idx] = False
+
             # 充电动作：只能选择小于等于当前可充电空间的充电功率
             if action_value > 0 and action_value > max_charge:
                 masks['battery_power'][idx] = False
 
-        # 2. EV电池动作掩码 - 使用动态约束
+        # 2. EV电池动作掩码 - 同样动态计算
         max_ev_discharge = (state['ev_battery_state'] / delta_t) * 0.95
         max_ev_charge = ((self.ev_capacity - state['ev_battery_state']) / delta_t) / 0.95
         
-        # 添加SOC约束
-        current_ev_soc = state['ev_battery_state'] / self.ev_capacity
-        if current_ev_soc <= ev_constraints['soc_lower']:
-            # EV电量过低，禁止放电
-            for idx, action_value in enumerate(self.action_space['ev_power']):
-                if action_value < 0:
-                    masks['ev_power'][idx] = False
-        elif current_ev_soc >= ev_constraints['soc_upper']:
-            # EV电量过高，禁止充电
-            for idx, action_value in enumerate(self.action_space['ev_power']):
-                if action_value > 0:
-                    masks['ev_power'][idx] = False
-
-        # 物理功率约束
         for idx, action_value in enumerate(self.action_space['ev_power']):
             # 放电限制
             if action_value < 0 and abs(action_value) > max_ev_discharge:
                 masks['ev_power'][idx] = False
+
             # 充电限制
             if action_value > 0 and action_value > max_ev_charge:
                 masks['ev_power'][idx] = False
 
         # 3. EV不在家时掩码
         if not self.is_ev_at_home():
-            # EV不在家时，禁止充放电
-            masks['ev_power'] = [False] * len(self.action_space['ev_power'])
-            # 但允许0功率（不操作）
-            zero_power_idx = list(self.action_space['ev_power']).index(0)
-            masks['ev_power'][zero_power_idx] = True
+            for idx, action_value in enumerate(self.action_space['ev_power']):
+                if action_value != 0:  # 只能选择0功率动作
+                    masks['ev_power'][idx] = False
 
         return masks
 
@@ -322,6 +289,7 @@ class HomeEnergyManagementEnv:
         return self.state
 
     def step(self, state, action):
+
         # === 动作物理裁剪，保证环境物理合理性 ===
         # --- 储能电池功率裁剪 ---
         ess_soc = state['ess_state']
@@ -340,6 +308,7 @@ class HomeEnergyManagementEnv:
         elif action['ev_power'] > 0:  # 充电
             max_charge = min(action['ev_power'], (self.ev_capacity - ev_soc) / 0.5 / self.charge_efficiency)
             action['ev_power'] = max_charge
+
 
         self.current_ev_power=action['ev_power']  # 存储当前动作
         current_dt = datetime.strptime(self.current_time, '%Y-%m-%d') + \
@@ -773,7 +742,7 @@ class HomeEnergyManagementEnv:
         net_demand = total_consumption - total_generation  # 这个需求就是与电网的交互
 
         # 转换为能量（kWh）并拆分购售电
-        purchase_kwh = max(net_demand, 0) * 0.5  # 这里其实有问题，因为购电有损耗，卖电电价会偏低。所以这里计算的是理想成本而非实际成本
+        purchase_kwh = max(net_demand, 0) * 0.5  # 这里计算的是理想成本而非实际成本
         sell_kwh = max(-net_demand, 0) * 0.5
 
         # 计算能源成本（考虑售电价格折扣）
@@ -797,7 +766,7 @@ class HomeEnergyManagementEnv:
             # ess_reward += -action['battery_power'] * (price - 0.5) * (1-soc) * 10
             ess_reward += -action['battery_power'] * (price - 0.5) * 20
         elif price == 0.5:
-            ess_reward += -action['battery_power'] * (soc-0.8) * 30
+            ess_reward += -action['battery_power'] * (soc-0.8) * 20
         else:
             # ess_reward += -action['battery_power'] * (price - 0.5) * soc * 10
             ess_reward += -action['battery_power'] * (price - 0.5) * 20
@@ -837,19 +806,7 @@ class HomeEnergyManagementEnv:
                 + self.temp_weight * temp_reward
         )
 
-        # === 软约束reward shaping（只在PPO-Lagrangian模式下生效） ===
-        if hasattr(self, 'constraint_mode') and self.constraint_mode == 'lagrangian':
-            # 目标违反率，建议在主循环中动态赋值给self.target_violation_rate
-            target_violation_rate = getattr(self, 'target_violation_rate', 0.2)
-            # ESS软约束惩罚
-            soc = state['ess_state'] / self.ess_capacity
-            ess_violation = max(0, 0.2 - soc) + max(0, soc - 0.8)
-            # EV软约束惩罚
-            ev_soc = state['ev_battery_state'] / self.ev_capacity
-            ev_violation = max(0, 0.2 - ev_soc) + max(0, ev_soc - 0.8)
-            # 动态惩罚系数（目标违反率越低，惩罚越大）
-            penalty_coef = 200 * (1 - target_violation_rate)  # 可根据实验调整
-            reward -= penalty_coef * (ess_violation + ev_violation)
+
 
         # # 新增探索奖励（防止早熟）
         # if np.random.rand() < 0.1:  # 10%概率添加噪声
@@ -946,18 +903,6 @@ class HomeEnergyManagementEnv:
         if low <= current_temp <= high:
             # 核心区奖励 (S型曲线)
             reward = 5.0 / (1 + np.exp(abs_diff * 0.8))  # 中心最高，边缘平滑下降
-            # if abs_diff <= 1:
-            #     reward += 1.0  # 精准控制奖励
-        # if low <= current_temp <= high:
-        #     # 核心区奖励 (S型曲线)
-        #     reward = 1.0 / (1 + np.exp(abs_diff * 0.8))  # 中心最高，边缘平滑下降
-        #     # 精准控制奖励，使用分段线性函数实现非线性效果
-        #     if abs_diff <= 0.5:  # 小偏移区间
-        #         reward += abs_diff * 2  # 例如，增长率 2
-        #     elif abs_diff <= 1:  # 中等偏移区间
-        #         reward += 0.5 * 2 + (abs_diff - 0.5) * 1  # 例如，超过0.5的部分增长率 1
-        #     else:
-        #         reward += 0.5 * 2 + 0.5 * 1  # 例如，超过1的部分不再增加奖励
         else:
             # 危险区惩罚（指数增长）
             deviation = max(low - current_temp, current_temp - high)
@@ -1026,7 +971,7 @@ class HomeEnergyManagementEnv:
     def save_cost_data(self):
         """保存成本数据到CSV文件"""
         # 创建结果目录
-        results_dir = "cost_results"
+        results_dir = "model/cost_results"
         os.makedirs(results_dir, exist_ok=True)
 
         # 创建唯一的文件名（包含时间戳）
@@ -1046,16 +991,15 @@ class HomeEnergyManagementEnv:
         print(f"成本数据已保存到: {csv_filename}")
 
     def save_episode_costs(self):
-
+        """保存每个episode的总成本到CSV文件"""
         # 创建结果目录
-        results_dir = "episode_cost_results"
+        results_dir = "model/episode_cost_results"
         os.makedirs(results_dir, exist_ok=True)
 
         # 创建唯一的文件名（包含时间戳）
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = os.path.join(results_dir, f"episode_costs_{timestamp}.csv")
 
-        """保存每个episode的总成本到CSV文件"""
         with open(filename, mode='w', newline='') as file:
             writer = csv.writer(file)
             # 写入标题行
@@ -1101,6 +1045,8 @@ class HomeEnergyManagementEnv:
 
         plt.tight_layout()
         # plt.show()
+        plt.savefig('figures/environment_plots/p3.png')
+        plt.close()
 
         # ===== 第二个画布：ESS充放电功率、光伏发电与电价变化图 =====
         plt.figure(figsize=(20, 10))
@@ -1190,6 +1136,8 @@ class HomeEnergyManagementEnv:
 
         plt.tight_layout()
         # plt.show()
+        plt.savefig('figures/environment_plots/p4.png')
+        plt.close()
 
         # ===== 第三个画布：空调功率变化图和温度变化图 =====
         plt.figure(figsize=(20, 10))
@@ -1231,6 +1179,8 @@ class HomeEnergyManagementEnv:
 
         plt.tight_layout()
         # plt.show()
+        plt.savefig('figures/environment_plots/p5.png')
+        plt.close()
 
         # ===== 第四个画布：第二台空调功率变化图和温度变化图 =====
         plt.figure(figsize=(20, 10))
@@ -1272,6 +1222,8 @@ class HomeEnergyManagementEnv:
 
         plt.tight_layout()
         # plt.show()
+        plt.savefig('figures/environment_plots/p6.png')
+        plt.close()
 
         # ===== 第五个画布：洗衣机状态图 =====
         plt.figure(figsize=(20, 5))
@@ -1326,6 +1278,9 @@ class HomeEnergyManagementEnv:
 
         plt.tight_layout()
         # plt.show()
+        plt.savefig('figures/environment_plots/p7.png')
+        plt.close()
+
 
         # ===== 第六个画布：热水器状态 =====
         plt.figure(figsize=(20, 10))
@@ -1386,6 +1341,8 @@ class HomeEnergyManagementEnv:
         ax6_1.legend()
         plt.tight_layout()
         # plt.show()
+        plt.savefig('figures/environment_plots/p8.png')
+        plt.close()
 
         # ===== 第七个画布：家庭总负载变化图 =====
         plt.figure(figsize=(20, 5))
@@ -1418,6 +1375,8 @@ class HomeEnergyManagementEnv:
 
         plt.tight_layout()
         # plt.show()
+        plt.savefig('figures/environment_plots/p9.png')
+        plt.close()
 
         # ===== 第8个画布：成本随时间变化的图 =====
         plt.figure(figsize=(20, 5))
@@ -1436,10 +1395,11 @@ class HomeEnergyManagementEnv:
         ax8.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
         plt.tight_layout()
-        # plt.show()
+        plt.savefig('figures/environment_plots/p10.png')
+        plt.close()
 
         # 新增：保存成本数据到文件
-        self.save_cost_data()
+        # self.save_cost_data()
 
     def plot_reward_components(self):
         plt.figure(figsize=(20, 8))
@@ -1485,69 +1445,87 @@ class HomeEnergyManagementEnv:
         plt.legend(loc='upper left', bbox_to_anchor=(1, 1))
         plt.grid(alpha=0.3)
         plt.tight_layout()
+
+        plt.savefig('figures/environment_plots/p2.png')
+        plt.close()
         # plt.show()
 
-    def plot_ewh_analysis(self):
-        # 新增功率-温度相位图
-        plt.scatter(self.ewh_power_record, self.ewh_temp_record,
-                    c=range(len(self.ewh_temp_record)), cmap='viridis')
-        plt.xlabel('Heating Power (kW)')
-        plt.ylabel('Temperature (°C)')
-        plt.colorbar(label='Time Step')
-
-    def get_dynamic_soc_constraints(self, state):
-        """
-        根据当前状态动态调整SOC约束
+    def save_simulation_data(self, filename=None):
+        """保存模拟数据到CSV文件，用于后续绘图分析"""
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"simulation_data_{timestamp}.csv"
         
-        Args:
-            state: 当前状态字典
-            
-        Returns:
-            dict: 包含ESS和EV的动态约束
-        """
-        # 基础约束
-        ess_constraints = {
-            'soc_lower': 0.05,  # 5% - 应急容量
-            'soc_upper': 0.95,  # 95% - 接近满电
-            'optimal_lower': 0.15,  # 15% - 最优下限
-            'optimal_upper': 0.85   # 85% - 最优上限
+        # 确保数据目录存在
+        os.makedirs('simulation_data', exist_ok=True)
+        filepath = os.path.join('simulation_data', filename)
+        
+        # 准备数据字典
+        data_dict = {
+            'timestamp': self.records['timestamps'],
+            'ev_soc': self.ev_battery_record,
+            'ess_soc': self.ess_state_record,
+            'home_load': self.home_load_record,
+            'pv_generation': self.pv_generation_record,
+            'electricity_price': self.electricity_price_record,
+            'ev_at_home': self.ev_at_home_record,
+            'wash_machine_state': self.wash_machine_record,
+            'air_conditioner_power': self.air_conditioner_power_record,
+            'ess_actions': self.ess_actions,
+            'wash_machine_actions': self.wash_machine_actions,
+            'air_conditioner_actions': self.air_conditioner_actions,
+            'ess_charge_pv': self.ess_charge_pv,
+            'ess_charge_grid': self.ess_charge_grid,
+            'ess_discharge_ev': self.ess_discharge_ev,
+            'ess_discharge_house': self.ess_discharge_house,
+            'indoor_temp': self.records['indoor_temp'],
+            'indoor_temp2': self.records['indoor_temp2'],
+            'outdoor_temp': self.records['outdoor_temp'],
+            'total_load': self.records['total_load'],
+            'energy_cost': self.records['energy_cost'],
+            'user_dissatisfaction': self.records['user_dissatisfaction'],
+            'ewh_temp': self.ewh_temp_record,
+            'ewh_power': self.ewh_power_record,
+            'user_flow': self.user_flow_record,
+            'air_conditioner_power2': self.air_conditioner_power_record2,
+            'daily_costs': self.records['daily_costs']
         }
         
-        ev_constraints = {
-            'soc_lower': 0.2,   # 20% - 基础出行需求
-            'soc_upper': 0.9,   # 90% - 保护电池
-            'comfort_lower': 0.3  # 30% - 用户舒适阈值
-        }
+        # 处理长度不匹配的问题
+        max_length = max(len(v) for v in data_dict.values() if isinstance(v, list))
         
-        # 根据电价调整ESS约束
-        price = state['electricity_price']
-        if price < 0.3:  # 谷电价
-            ess_constraints['soc_upper'] = 0.95  # 允许充到95%
-        elif price > 0.8:  # 峰电价
-            ess_constraints['soc_lower'] = 0.05  # 允许放到5%
+        # 确保所有列表长度一致
+        for key, value in data_dict.items():
+            if isinstance(value, list):
+                if len(value) < max_length:
+                    # 用最后一个值填充
+                    data_dict[key] = value + [value[-1]] * (max_length - len(value))
+                elif len(value) > max_length:
+                    # 截断到最大长度
+                    data_dict[key] = value[:max_length]
         
-        # 根据光伏发电调整ESS约束
-        pv_ratio = state['pv_generation'] / max(state['home_load'], 0.1)
-        if pv_ratio > 1.5:  # 光伏充足
-            ess_constraints['soc_upper'] = 0.95
-        elif pv_ratio < 0.5:  # 光伏不足
-            ess_constraints['soc_lower'] = 0.15
+        # 创建DataFrame
+        df = pd.DataFrame(data_dict)
         
-        # 根据EV出行计划调整
-        if self.data_interface.is_ev_departing_soon(self.current_time, self.current_time_index):
-            # EV即将离家，提高最低电量要求
-            ev_constraints['soc_lower'] = max(ev_constraints['soc_lower'], 0.4)
-            ev_constraints['comfort_lower'] = 0.5
+        # 保存到CSV
+        df.to_csv(filepath, index=False, encoding='utf-8-sig')
+        print(f"模拟数据已保存到: {filepath}")
         
-        # 根据时间调整
-        hour = state['time_index'] // 2
-        if 6 <= hour <= 9:  # 早高峰
-            ev_constraints['soc_lower'] = max(ev_constraints['soc_lower'], 0.3)
-        elif 18 <= hour <= 22:  # 晚高峰
-            ev_constraints['soc_lower'] = max(ev_constraints['soc_lower'], 0.25)
+        # 同时保存奖励组件数据
+        reward_filename = filename.replace('.csv', '_rewards.csv')
+        reward_filepath = os.path.join('simulation_data', reward_filename)
         
-        return {
-            'ess': ess_constraints,
-            'ev': ev_constraints
-        }
+        reward_data = {}
+        for key, values in self.reward_components.items():
+            if isinstance(values, list):
+                if len(values) < max_length:
+                    reward_data[key] = values + [values[-1]] * (max_length - len(values))
+                else:
+                    reward_data[key] = values[:max_length]
+        
+        reward_df = pd.DataFrame(reward_data)
+        reward_df.to_csv(reward_filepath, index=False, encoding='utf-8-sig')
+        print(f"奖励组件数据已保存到: {reward_filepath}")
+        
+        return filepath
 

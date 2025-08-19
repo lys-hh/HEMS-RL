@@ -1,5 +1,9 @@
+"""
+独立网络层
+"""
 import csv
 import os
+import sys
 from datetime import datetime
 import matplotlib
 matplotlib.use('Agg')
@@ -12,6 +16,10 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from environment import HomeEnergyManagementEnv
 from model import rl_utils
+# 添加evaluation目录到路径（使用相对路径）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(os.path.join(project_root, 'evaluation'))
 from plt import plot_returns
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -682,7 +690,7 @@ if __name__ == "__main__":
     episode_returns = []
 
     # 创建结果目录
-    results_dir = "results"
+    results_dir = "model/results"
     os.makedirs(results_dir, exist_ok=True)
 
     # 创建唯一的文件名（包含时间戳）
@@ -1079,7 +1087,7 @@ if __name__ == "__main__":
     env.save_episode_costs()
 
     # 保存训练好的模型
-    model_save_dir = "saved_models"
+    model_save_dir = "model/saved_models"
     os.makedirs(model_save_dir, exist_ok=True)
     norm_suffix = "_norm" if USE_STATE_NORMALIZATION else "_no_norm"
     model_filename = os.path.join(model_save_dir, f"ppo2_model_{timestamp}{norm_suffix}.pth")

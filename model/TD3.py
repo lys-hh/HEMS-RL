@@ -7,10 +7,17 @@ from collections import deque
 import random
 import matplotlib.pyplot as plt
 import os
+import sys
 import csv
 from datetime import datetime
 import matplotlib
 matplotlib.use('Agg')
+
+# 添加项目根目录到Python路径（使用相对路径）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+
 from environment import HomeEnergyManagementEnv
 from collections import OrderedDict
 
@@ -40,7 +47,7 @@ class RunningStats:
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 创建结果目录（与PPO相同）
-results_dir = "results"
+results_dir = "model/results"
 os.makedirs(results_dir, exist_ok=True)
 
 # 定义状态键（与PPO相同）
@@ -209,24 +216,11 @@ class TD3:
                                         closest_idx = min(allowed_indices, key=lambda i: abs(i - action_idx))
                                         disc_action[device_name] = self.converter.action_map[device_name][closest_idx]
 
-        # 应用物理约束
-        # if not env.is_ev_at_home():
-        #     disc_action['ev_power'] = 0.0
-        # ess_state = state_dict['ess_state']
-        # ev_state = state_dict['ev_battery_state']
-        # if ess_state > 23.5:
-        #     disc_action['battery_power'] = min(disc_action['battery_power'], 0)
-        # elif ess_state < 0.5:
-        #     disc_action['battery_power'] = max(disc_action['battery_power'], 0)
-        # if ev_state > 23.5:
-        #     disc_action['ev_power'] = min(disc_action['ev_power'], 0)
-        # elif ev_state < 0.5:
-        #     disc_action['ev_power'] = max(disc_action['ev_power'], 0)
+        if return_continuous:
+            return cont_action, disc_action
+        else:
+            return disc_action
 
-        # if return_continuous:
-        #     return cont_action, disc_action
-        # else:
-        #     return disc_action
 
     def update(self):
         if len(self.replay_buffer) < self.batch_size:
@@ -303,25 +297,16 @@ class TD3:
     def train(self, env, episodes=1000):
         self.total_steps = 0
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_dir = "results"
+        results_dir = "model/results"
         os.makedirs(results_dir, exist_ok=True)
         csv_filename = os.path.join(results_dir, f"returns_td3_{timestamp}.csv")
-        # 写入PPO3风格的表头
+        # 写入TD3风格的表头（参考Rainbow DQN格式）
         with open(csv_filename, mode='w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow([
-                "Episode", "Return", "Actor_Loss", "Critic_Loss", "Constraint_Loss", "Total_Loss",
-                "ESS_Violation_Rate", "EV_Violation_Rate", "Total_Violation_Rate",
-                "ESS_Violation_Count_Rate", "EV_Violation_Count_Rate", "Total_Violation_Count_Rate",
-                "ESS_Safety_Margin_Mean", "ESS_Safety_Margin_Std", "EV_Safety_Margin_Mean", "EV_Safety_Margin_Std",
+                "Episode", "Return", "Actor_Loss", "Critic_Loss", "ESS_Violation_Rate", "EV_Violation_Rate", "Total_Violation_Rate",
                 "Energy_Cost", "User_Satisfaction", "Temperature_Comfort",
-                "AC1_Temp_Comfort", "AC2_Temp_Comfort", "EWH_Temp_Comfort",
-                "AC1_Indoor_Temp", "AC2_Indoor_Temp", "EWH_Temp",
-                "ESS_SOC_Mean", "ESS_SOC_Std", "EV_SOC_Mean", "EV_SOC_Std",
-                "Peak_Valley_Arbitrage",
-                "Training_Stability", "Sample_Efficiency",
-                "Lambda_ESS", "Lambda_EV", "Constraint_Weight",
-                "ESS_Violation_Mean", "EV_Violation_Mean"
+                "AC1_Temp_Comfort", "AC2_Temp_Comfort", "EWH_Temp_Comfort", "Learning_Rate"
             ])
             episode_returns = []
             for ep in range(episodes):
@@ -456,60 +441,27 @@ class TD3:
                 ess_violation_rate = episode_ess_violations / step_count if step_count > 0 else 0
                 ev_violation_rate = episode_ev_violations / step_count if step_count > 0 else 0
                 total_violation_rate = (ess_violation_rate + ev_violation_rate) / 2 if step_count > 0 else 0
-                ess_violation_count_rate = episode_ess_violations_count / step_count if step_count > 0 else 0
-                ev_violation_count_rate = episode_ev_violations_count / step_count if step_count > 0 else 0
-                total_violation_count_rate = (episode_ess_violations_count + episode_ev_violations_count) / (2 * step_count) if step_count > 0 else 0
-                ess_safety_margin_mean = np.mean(episode_ess_safety_margins) if episode_ess_safety_margins else 0
-                ess_safety_margin_std = np.std(episode_ess_safety_margins) if episode_ess_safety_margins else 0
-                ev_safety_margin_mean = np.mean(episode_ev_safety_margins) if episode_ev_safety_margins else 0
-                ev_safety_margin_std = np.std(episode_ev_safety_margins) if episode_ev_safety_margins else 0
                 energy_cost = np.mean(episode_energy_costs) if episode_energy_costs else 0
                 user_satisfaction = np.mean(episode_user_satisfactions) if episode_user_satisfactions else 0
                 temperature_comfort = np.mean(episode_temperature_comforts) if episode_temperature_comforts else 0
                 ac1_temp_comfort = np.mean(ac1_temp_comforts) if ac1_temp_comforts else 0
                 ac2_temp_comfort = np.mean(ac2_temp_comforts) if ac2_temp_comforts else 0
                 ewh_temp_comfort = np.mean(ewh_temp_comforts) if ewh_temp_comforts else 0
-                ess_soc_mean = np.mean(episode_ess_socs) if episode_ess_socs else 0.5
-                ess_soc_std = np.std(episode_ess_socs) if episode_ess_socs else 0
-                ev_soc_mean = np.mean(episode_ev_socs) if episode_ev_socs else 0.5
-                ev_soc_std = np.std(episode_ev_socs) if episode_ev_socs else 0
-                peak_valley_arbitrage = np.mean(episode_peak_valley_arbitrages) if episode_peak_valley_arbitrages else 0
-                if len(episode_returns) >= 10:
-                    recent_returns = episode_returns[-10:]
-                    training_stability = 1.0 / (1.0 + np.std(recent_returns))
-                else:
-                    training_stability = 0.0
-                sample_efficiency = episode_reward / step_count if step_count > 0 else 0
-                # TD3无约束参数，全部填0
-                lambda_ess = 0.0
-                lambda_ev = 0.0
-                constraint_weight = 0.0
-                ess_violation_mean = ess_violation_rate
-                ev_violation_mean = ev_violation_rate
-                total_loss = avg_actor + avg_critic
+                current_lr = self.actor_optimizer.param_groups[0]['lr']
+                
                 # 写入一行
                 writer.writerow([
-                    ep + 1, episode_reward, avg_actor, avg_critic, 0.0, total_loss,
-                    ess_violation_rate, ev_violation_rate, total_violation_rate,
-                    ess_violation_count_rate, ev_violation_count_rate, total_violation_count_rate,
-                    ess_safety_margin_mean, ess_safety_margin_std, ev_safety_margin_mean, ev_safety_margin_std,
+                    ep + 1, episode_reward, avg_actor, avg_critic, ess_violation_rate, ev_violation_rate, total_violation_rate,
                     energy_cost, user_satisfaction, temperature_comfort,
-                    ac1_temp_comfort, ac2_temp_comfort, ewh_temp_comfort,
-                    getattr(env, 'indoor_temp', 22), getattr(env, 'indoor_temp2', 18), ewh_temp,
-                    ess_soc_mean, ess_soc_std, ev_soc_mean, ev_soc_std,
-                    peak_valley_arbitrage,
-                    training_stability, sample_efficiency,
-                    lambda_ess, lambda_ev, constraint_weight,
-                    ess_violation_mean, ev_violation_mean
+                    ac1_temp_comfort, ac2_temp_comfort, ewh_temp_comfort, current_lr
                 ])
                 file.flush()
-                print(f"Episode {ep + 1}/{episodes}, Reward: {episode_reward:.2f}, "
-                      f"Critic Loss: {avg_critic:.4f}, Actor Loss: {avg_actor:.4f}, Q Mean: {q_mean:.2f}, "
-                      f"ESS Violation Rate: {ess_violation_rate:.3f}, EV Violation Rate: {ev_violation_rate:.3f}, "
-                      f"Energy Cost: {energy_cost:.2f}, User Satisfaction: {user_satisfaction:.3f}, Temp Comfort: {temperature_comfort:.3f}")
+                print(f"Episode {ep + 1}/{episodes}, Return: {episode_reward:.2f}, "
+                      f"Actor Loss: {avg_actor:.4f}, Critic Loss: {avg_critic:.4f}, "
+                      f"Violation: {total_violation_rate:.3f}, Cost: {energy_cost:.2f}, LR: {current_lr:.6f}")
         
-        # ========== 新增：TD3模型保存逻辑 ==========
-        model_save_dir = "saved_models"
+        # ========== TD3模型保存逻辑 ==========
+        model_save_dir = "model/saved_models"
         os.makedirs(model_save_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_filename = os.path.join(model_save_dir, f"td3_model_{timestamp}.pth")
@@ -522,13 +474,12 @@ class TD3:
             'target_critic1_state_dict': self.critic1_target.state_dict(),
             'target_critic2_state_dict': self.critic2_target.state_dict(),
             'actor_optimizer_state_dict': self.actor_optimizer.state_dict(),
-            'critic1_optimizer_state_dict': self.critic_optimizer.state_dict(),
-            'critic2_optimizer_state_dict': self.critic_optimizer.state_dict(),
+            'critic_optimizer_state_dict': self.critic_optimizer.state_dict(),
             'state_keys': state_keys,
+            'action_space_config': action_space_config,
             'training_config': {
                 'state_dim': self.state_dim,
                 'action_dim': self.action_dim,
-                'action_space_config': self.action_space_config,
                 'lr_actor': self.actor_optimizer.param_groups[0]['lr'],
                 'lr_critic': self.critic_optimizer.param_groups[0]['lr'],
                 'gamma': self.gamma,
@@ -537,9 +488,18 @@ class TD3:
                 'batch_size': self.batch_size,
                 'noise_std': self.noise_std,
                 'noise_clip': self.noise_clip,
-                'update_freq': self.update_freq
+                'update_freq': self.update_freq,
+                'reward_scale': self.reward_scale,
+                'q_clip': self.q_clip,
+                'use_state_norm': self.use_state_norm
             }
         }
+        
+        # 如果使用了状态归一化，保存状态统计信息
+        if self.use_state_norm:
+            model_save_dict['state_stats_mean'] = self.state_stats.mean
+            model_save_dict['state_stats_var'] = self.state_stats.var
+            model_save_dict['state_stats_count'] = self.state_stats.count
         
         torch.save(model_save_dict, model_filename)
         print(f"TD3模型已保存到: {model_filename}")
@@ -548,6 +508,41 @@ class TD3:
         self.plot_returns()
         env.save_episode_costs()
         env.plot_reward_components()
+        print(f"TD3训练完成！Returns数据已保存到: {csv_filename}")
+
+    def load_model(self, model_path):
+        """加载保存的TD3模型"""
+        if not os.path.exists(model_path):
+            print(f"模型文件不存在: {model_path}")
+            return False
+        
+        try:
+            checkpoint = torch.load(model_path, map_location=device)
+            
+            # 加载网络状态
+            self.actor.load_state_dict(checkpoint['actor_state_dict'])
+            self.critic1.load_state_dict(checkpoint['critic1_state_dict'])
+            self.critic2.load_state_dict(checkpoint['critic2_state_dict'])
+            self.actor_target.load_state_dict(checkpoint['target_actor_state_dict'])
+            self.critic1_target.load_state_dict(checkpoint['target_critic1_state_dict'])
+            self.critic2_target.load_state_dict(checkpoint['target_critic2_state_dict'])
+            
+            # 加载优化器状态
+            self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state_dict'])
+            self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state_dict'])
+            
+            # 加载状态归一化统计信息
+            if 'state_stats_mean' in checkpoint and self.use_state_norm:
+                self.state_stats.mean = checkpoint['state_stats_mean']
+                self.state_stats.var = checkpoint['state_stats_var']
+                self.state_stats.count = checkpoint['state_stats_count']
+            
+            print(f"TD3模型已成功加载: {model_path}")
+            return True
+            
+        except Exception as e:
+            print(f"加载模型时出错: {e}")
+            return False
 
     def plot_returns(self):
         """绘制回报曲线并保存到结果目录"""
@@ -575,7 +570,7 @@ class TD3:
 
         # 保存图像到结果目录
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        plt.savefig(os.path.join(results_dir, f"td3_returns_{timestamp}.png"))
+        plt.savefig(f"figures/training_progress/td3_returns_{timestamp}.png")
         plt.close()
 
         # 绘制损失曲线
@@ -587,7 +582,7 @@ class TD3:
         plt.title('TD3 Training Losses')
         plt.legend()
         plt.grid(True)
-        plt.savefig(os.path.join(results_dir, f"td3_losses_{timestamp}.png"))
+        plt.savefig(f"figures/training_progress/td3_losses_{timestamp}.png")
         plt.close()
 
 

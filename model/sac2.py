@@ -10,7 +10,15 @@ import torch.nn.functional as F
 from torch.distributions import Normal
 import numpy as np
 import random
+import os
+import sys
 from collections import deque
+
+# 添加项目根目录到Python路径（使用相对路径）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+
 from environment import HomeEnergyManagementEnv
 import matplotlib.pyplot as plt
 
@@ -379,9 +387,9 @@ def train_enhanced_sac(env, episodes=500, batch_size=1024, buffer_size=1e6, min_
         }
     }
     import os
-    os.makedirs('saved_models', exist_ok=True)
-    torch.save(model_save_dict, 'saved_models/sac2_model.pth')
-    print('模型已保存到: saved_models/sac2_model.pth')
+    os.makedirs('model/saved_models', exist_ok=True)
+    torch.save(model_save_dict, 'model/saved_models/sac2_model.pth')
+    print('模型已保存到: model/saved_models/sac2_model.pth')
     
     return returns
 
