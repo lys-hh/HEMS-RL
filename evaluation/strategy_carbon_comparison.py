@@ -10,6 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import sys
 import os
+import importlib
+import types
 
 # 添加项目根目录到Python路径（使用相对路径）
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +24,7 @@ from environment import HomeEnergyManagementEnv
 import random
 from datetime import datetime
 import warnings
+import multiprocessing as mp
 
 # 设置matplotlib后端和警告
 warnings.filterwarnings('ignore')  # 忽略警告
@@ -32,6 +35,18 @@ import matplotlib.pyplot as plt
 # 设置字体为支持英文的字体
 plt.rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['axes.unicode_minus'] = False
+
+# 兼容性垫片：部分序列化文件在保存时依赖 numpy._core（NumPy 2.x 命名），
+# 在当前环境（NumPy 1.21.x）中不存在该模块，导致 torch.load 反序列化失败。
+# 如果检测不到 numpy._core，则将 numpy.core 代理为 numpy._core。
+try:
+    if importlib.util.find_spec('numpy._core') is None:
+        import numpy.core as _np_core
+        _proxy = types.ModuleType('numpy._core')
+        _proxy.__dict__.update(_np_core.__dict__)
+        sys.modules['numpy._core'] = _proxy
+except Exception:
+    pass
 
 class StrategyCarbonComparison:
     def __init__(self):
@@ -75,17 +90,17 @@ class StrategyCarbonComparison:
                 'name': 'DDPG算法',
                 'model_path': os.path.join(model_dir, 'ddpg.pth'),
                 'strategy_func': self.get_model_action
+            },
+            'td3': {
+                'name': 'TD3算法',
+                'model_path': os.path.join(model_dir, 'td3_model_min.pth'),
+                'strategy_func': self.get_model_action
+            },
+            'sac': {
+                'name': 'SAC算法',
+                'model_path': os.path.join(model_dir, 'sac2_model_min.pth'),
+                'strategy_func': self.get_model_action
             }
-            # 'td3': {
-            #     'name': 'TD3算法',
-            #     'model_path': os.path.join(model_dir, 'td3_model_20250805_004024.pth'),
-            #     'strategy_func': self.get_model_action
-            # },
-            # 'sac': {
-            #     'name': 'SAC算法',
-            #     'model_path': os.path.join(model_dir, 'sac2_model_20250805_004024.pth'),
-            #     'strategy_func': self.get_model_action
-            # }
         }
         
         # 实验配置：统一使用完整配置
@@ -102,6 +117,113 @@ class StrategyCarbonComparison:
         # 加载所有模型
         self.loaded_models = {}
         self.load_all_models()
+    
+    def _safe_torch_load(self, model_path):
+        """兼容性增强的torch.load，尽量避免环境差异导致的反序列化失败"""
+        # 优先尝试weights_only（若PyTorch版本支持）
+        try:
+            return torch.load(model_path, map_location='cpu', weights_only=True)
+        except TypeError:
+            pass
+        except Exception:
+            pass
+        # 常规加载
+        try:
+            return torch.load(model_path, map_location='cpu')
+        except Exception:
+            pass
+        # 尝试使用pickle以latin1编码回退
+        try:
+            import pickle
+            with open(model_path, 'rb') as f:
+                return pickle.load(f, encoding='latin1')
+        except Exception as e:
+            raise e
+
+    def _extract_checkpoint_keys_worker(self, model_path, required_keys, conn):
+        """子进程工作函数：仅提取所需键，避免主进程卡死"""
+        try:
+            import sys as _sys
+            import importlib as _importlib
+            import types as _types
+            import os as _os
+            # 限制子进程的线程数，避免BLAS/OMP卡死
+            try:
+                _os.environ.setdefault('OMP_NUM_THREADS', '1')
+                _os.environ.setdefault('MKL_NUM_THREADS', '1')
+            except Exception:
+                pass
+            # 子进程内注入 numpy._core 兼容垫片，避免 structseq 相关反序列化崩溃
+            try:
+                if _importlib.util.find_spec('numpy._core') is None:
+                    import numpy.core as _np_core
+                    _proxy = _types.ModuleType('numpy._core')
+                    _proxy.__dict__.update(_np_core.__dict__)
+                    _sys.modules['numpy._core'] = _proxy
+            except Exception:
+                pass
+
+            import torch
+            try:
+                torch.set_num_threads(1)
+            except Exception:
+                pass
+            ckpt = None
+            # 1) 优先 weights_only（若可用）
+            try:
+                ckpt = torch.load(model_path, map_location='cpu', weights_only=True)
+            except TypeError:
+                pass
+            except Exception:
+                pass
+            # 2) 常规加载
+            if ckpt is None:
+                try:
+                    ckpt = torch.load(model_path, map_location='cpu')
+                except Exception:
+                    ckpt = None
+            # 3) pickle latin1 回退
+            if ckpt is None:
+                try:
+                    import pickle as _pickle
+                    with open(model_path, 'rb') as f:
+                        ckpt = _pickle.load(f, encoding='latin1')
+                except Exception as e:
+                    conn.send((False, str(e)))
+                    return
+            slim = {}
+            if isinstance(required_keys, dict):
+                # 允许(key -> default)形式
+                for k, default in required_keys.items():
+                    slim[k] = ckpt.get(k, default)
+            else:
+                for k in required_keys:
+                    if k in ckpt:
+                        slim[k] = ckpt[k]
+            conn.send((True, slim))
+        except Exception as e:
+            conn.send((False, str(e)))
+        finally:
+            conn.close()
+
+    def _load_checkpoint_minimal(self, model_path, required_keys, timeout_sec=180):
+        """在子进程中最小化加载checkpoint，仅返回指定键，超时则放弃"""
+        parent_conn, child_conn = mp.Pipe(duplex=False)
+        proc = mp.Process(target=self._extract_checkpoint_keys_worker, args=(model_path, required_keys, child_conn))
+        proc.start()
+        proc.join(timeout=timeout_sec)
+        if proc.is_alive():
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            return None, f"load timeout (> {timeout_sec}s)"
+        if parent_conn.poll():
+            ok, payload = parent_conn.recv()
+            if ok:
+                return payload, None
+            return None, payload
+        return None, "unknown load failure"
         
     def load_all_models(self):
         """加载所有配置的模型"""
@@ -134,7 +256,24 @@ class StrategyCarbonComparison:
     def load_model(self, model_path, strategy_key):
         """加载单个模型（根据策略类型）"""
         try:
-            checkpoint = torch.load(model_path, map_location='cpu')
+            print(f"   ⏳ 正在读取checkpoint({strategy_key}) -> {model_path}")
+            # SAC/TD3 使用子进程最小化加载，避免主进程卡死
+            if strategy_key in ('sac', 'td3'):
+                # 对于已精简的最小文件，直接在主进程安全加载，避免Windows下子进程句柄问题
+                if os.path.basename(model_path).endswith('_min.pth'):
+                    checkpoint = self._safe_torch_load(model_path)
+                    print(f"   ✅ checkpoint已读取({strategy_key})，包含键: {list(checkpoint.keys())}")
+                else:
+                    required = ['training_config', 'state_keys', 'actor_state_dict']
+                    checkpoint, err = self._load_checkpoint_minimal(model_path, required, timeout_sec=180)
+                    if checkpoint is None:
+                        print(f"   ❌ {strategy_key} 子进程最小化加载失败: {err}")
+                        return None
+                    print(f"   ✅ checkpoint已读取({strategy_key})，包含键: {list(checkpoint.keys())}")
+            else:
+                # 使用兼容性增强的安全加载，避免不同环境下的反序列化问题
+                checkpoint = self._safe_torch_load(model_path)
+                print(f"   ✅ checkpoint已读取({strategy_key})，包含键: {list(checkpoint.keys())[:6]} ...")
             
             if strategy_key == 'proposed_rl':
                 return self.load_ppo_model(checkpoint)
@@ -344,34 +483,66 @@ class StrategyCarbonComparison:
     def load_td3_model(self, checkpoint):
         """加载TD3模型"""
         try:
-            # 确保能找到model模块
-            model_path = os.path.join(self.project_root, 'model')
-            if model_path not in sys.path:
-                sys.path.append(model_path)
-            from TD3 import TD3, Actor, Critic, ActionConverter
-            
+            # 直接使用轻量级推理封装，避免导入TD3模块引发的卡顿
             # 从checkpoint获取配置
             if isinstance(checkpoint, dict) and 'training_config' in checkpoint:
                 config = checkpoint['training_config']
                 
-                # 重新构建智能体
-                agent = TD3(config['state_dim'], config['action_dim'], config['action_space_config'])
-                
-                # 加载模型权重
+                # 轻量版动作转换器（与TD3一致的映射）
+                class _TD3ActionConverter:
+                    def __init__(self, action_space_config):
+                        self.action_map = action_space_config
+                    def _convert_single(self, value, options):
+                        scaled = (value + 1) / 2
+                        idx = int(round(scaled * (len(options) - 1)))
+                        return options[max(0, min(idx, len(options) - 1))]
+                    def continuous_to_discrete(self, continuous_action):
+                        return {
+                            'ev_power': self._convert_single(continuous_action[0], self.action_map['ev_power']),
+                            'battery_power': self._convert_single(continuous_action[1], self.action_map['battery_power']),
+                            'wash_machine_schedule': self._convert_single(continuous_action[2], self.action_map['wash_machine_schedule']),
+                            'Air_conditioner_set_temp': self._convert_single(continuous_action[3], self.action_map['Air_conditioner_set_temp']),
+                            'Air_conditioner_set_temp2': self._convert_single(continuous_action[4], self.action_map['Air_conditioner_set_temp2']),
+                            'ewh_set_temp': self._convert_single(continuous_action[5], self.action_map['ewh_set_temp'])
+                        }
+
+                # 轻量版网络结构（与TD3中Actor保持一致）
+                class _TD3Actor(torch.nn.Module):
+                    def __init__(self, state_dim, action_dim):
+                        super().__init__()
+                        self.net = torch.nn.Sequential(
+                            torch.nn.Linear(state_dim, 512),
+                            torch.nn.ReLU(),
+                            torch.nn.Linear(512, 256),
+                            torch.nn.ReLU(),
+                            torch.nn.Linear(256, action_dim)
+                        )
+                    def forward(self, state):
+                        return self.net(state)
+
+                class _TD3Agent:
+                    def __init__(self, state_dim, action_dim, action_space_config):
+                        self.actor = _TD3Actor(state_dim, action_dim)
+                        self.converter = _TD3ActionConverter(action_space_config)
+
+                agent = _TD3Agent(config['state_dim'], config['action_dim'], config['action_space_config'])
+
+                # 加载权重（仅推理所需）
                 agent.actor.load_state_dict(checkpoint['actor_state_dict'])
-                agent.critic1.load_state_dict(checkpoint['critic1_state_dict'])
-                agent.critic2.load_state_dict(checkpoint['critic2_state_dict'])
-                
-                # 设置为评估模式
                 agent.actor.eval()
-                agent.critic1.eval()
-                agent.critic2.eval()
                 
                 # 加载运行统计信息（如果存在）
                 running_stats = None
                 if 'running_stats_mean' in checkpoint:
-                    from TD3 import RunningStats
-                    running_stats = RunningStats(shape=config['state_dim'])
+                    # 轻量版RunningStats
+                    class _RunningStats:
+                        def __init__(self, shape):
+                            self.mean = np.zeros(shape, dtype=np.float32)
+                            self.std = np.ones(shape, dtype=np.float32)
+                            self.count = 1.0
+                        def normalize(self, x):
+                            return (x - self.mean) / (self.std + 1e-8)
+                    running_stats = _RunningStats(shape=config['state_dim'])
                     running_stats.mean = checkpoint['running_stats_mean']
                     running_stats.std = checkpoint.get('running_stats_std', checkpoint.get('running_stats_var', 1.0))
                     running_stats.count = checkpoint['running_stats_count']
@@ -392,26 +563,94 @@ class StrategyCarbonComparison:
     def load_sac_model(self, checkpoint):
         """加载SAC模型"""
         try:
-            # 确保能找到model模块
-            model_path = os.path.join(self.project_root, 'model')
-            if model_path not in sys.path:
-                sys.path.append(model_path)
-            from sac2 import EnhancedSAC, Actor, Critic, ActionConverter
-            
+            print("   🔧 SAC: 进入轻量加载逻辑")
+            # 使用轻量级推理封装，避免导入sac2模块引发的卡顿
             # 从checkpoint获取配置
             if isinstance(checkpoint, dict) and 'training_config' in checkpoint:
                 config = checkpoint['training_config']
+                print(f"   🔧 SAC: 读取training_config: state_dim={config.get('state_dim')}, action_dim={config.get('action_dim')}")
                 
-                # 重新构建智能体
-                agent = EnhancedSAC(config['state_dim'], config['action_dim'], device='cpu')
-                
-                # 加载模型权重
-                agent.actor.load_state_dict(checkpoint['actor_state_dict'])
-                agent.critic.load_state_dict(checkpoint['critic_state_dict'])
-                
-                # 设置为评估模式
+                # 轻量版SAC的组件（与sac2保持一致的推理接口）
+                class _SACActionConverter:
+                    def __init__(self):
+                        self.action_map = {
+                            'ev_power': [-6.6, -3.3, 0, 3.3, 6.6],
+                            'battery_power': [-4.4, -2.2, 0, 2.2, 4.4],
+                            'wash_machine_schedule': [0, 1, 2, 3, 4, 5, 6],
+                            'Air_conditioner_set_temp': [16, 18, 20, 22, 24, 26, 28, 30],
+                            'Air_conditioner_set_temp2': [16, 18, 20, 22, 24, 26, 28, 30],
+                            'ewh_set_temp': [40, 45, 50, 55, 60, 65, 70]
+                        }
+                    def _convert_single(self, value, options):
+                        scaled = (value + 1) / 2
+                        idx = int(round(scaled * (len(options) - 1)))
+                        return options[max(0, min(idx, len(options) - 1))]
+                    def continuous_to_discrete(self, continuous_action):
+                        return {
+                            'ev_power': self._convert_single(continuous_action[0], self.action_map['ev_power']),
+                            'battery_power': self._convert_single(continuous_action[1], self.action_map['battery_power']),
+                            'wash_machine_schedule': self._convert_single(continuous_action[2], self.action_map['wash_machine_schedule']),
+                            'Air_conditioner_set_temp': self._convert_single(continuous_action[3], self.action_map['Air_conditioner_set_temp']),
+                            'Air_conditioner_set_temp2': self._convert_single(continuous_action[4], self.action_map['Air_conditioner_set_temp2']),
+                            'ewh_set_temp': self._convert_single(continuous_action[5], self.action_map['ewh_set_temp'])
+                        }
+
+                # 从权重中推断隐藏维度，保证结构对齐
+                try:
+                    inferred_hidden = checkpoint['actor_state_dict']['net.0.weight'].shape[0]
+                except Exception:
+                    inferred_hidden = config.get('hidden_dim', 512)
+
+                class _SACActor(torch.nn.Module):
+                    def __init__(self, state_dim, action_dim, hidden_dim):
+                        super().__init__()
+                        self.net = torch.nn.Sequential(
+                            torch.nn.Linear(state_dim, hidden_dim),
+                            torch.nn.LayerNorm(hidden_dim),
+                            torch.nn.ReLU(),
+                            torch.nn.Linear(hidden_dim, hidden_dim),
+                            torch.nn.LayerNorm(hidden_dim),
+                            torch.nn.ReLU()
+                        )
+                        self.mean = torch.nn.Linear(hidden_dim, action_dim)
+                        self.log_std = torch.nn.Linear(hidden_dim, action_dim)
+                        # 与训练端一致：不把 action_scale/bias 作为 state_dict 的一部分
+                        self.action_scale = torch.tensor([1.0] * action_dim)
+                        self.action_bias = torch.tensor([0.0] * action_dim)
+                    def forward(self, state):
+                        x = self.net(state)
+                        mean = self.mean(x)
+                        log_std = self.log_std(x)
+                        log_std = torch.clamp(log_std, min=-20, max=2)
+                        return mean, log_std
+                    def sample(self, state):
+                        mean, log_std = self.forward(state)
+                        std = torch.exp(log_std)
+                        normal = torch.distributions.Normal(mean, std)
+                        x_t = normal.rsample()
+                        y_t = torch.tanh(x_t)
+                        action = y_t * self.action_scale + self.action_bias
+                        log_prob = normal.log_prob(x_t)
+                        log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6)
+                        return action, log_prob.sum(1, keepdim=True)
+
+                class _SACAgent:
+                    def __init__(self, state_dim, action_dim):
+                        self.actor = _SACActor(state_dim, action_dim, inferred_hidden)
+                        self.converter = _SACActionConverter()
+                    def select_action(self, state_tensor):
+                        with torch.no_grad():
+                            if isinstance(state_tensor, np.ndarray):
+                                state_tensor = torch.FloatTensor(state_tensor).unsqueeze(0)
+                            action_cont, _ = self.actor.sample(state_tensor)
+                        return self.converter.continuous_to_discrete(action_cont.cpu().numpy()[0])
+
+                print("   🔧 SAC: 构建轻量Actor")
+                agent = _SACAgent(config['state_dim'], config['action_dim'])
+                print("   🔧 SAC: 加载actor_state_dict")
+                agent.actor.load_state_dict(checkpoint['actor_state_dict'], strict=True)
+                print("   🔧 SAC: 设置eval模式")
                 agent.actor.eval()
-                agent.critic.eval()
                 
                 return {
                     'agent': agent,
@@ -621,8 +860,6 @@ class StrategyCarbonComparison:
         
         # 确保所有模型组件在CPU上并设置为float32
         agent.actor.to('cpu').float()
-        agent.critic1.to('cpu').float()
-        agent.critic2.to('cpu').float()
         normalized_state = normalized_state.float()
         
         # 使用TD3智能体预测动作（不添加噪声，用于评估）
@@ -643,7 +880,6 @@ class StrategyCarbonComparison:
         
         # 确保所有模型组件在CPU上并设置为float32
         agent.actor.to('cpu').float()
-        agent.critic.to('cpu').float()
         state_tensor = state_tensor.float()
         
         # 使用SAC智能体预测动作（不添加噪声，用于评估）
@@ -720,6 +956,7 @@ class StrategyCarbonComparison:
             'strategy': strategy_config['name'],
             'configuration': config['name'],
             'total_carbon': 0,
+            'total_cost': 0,
             'total_grid_purchase': 0,
             'total_grid_sale': 0,
             'ev_charge_energy': 0,
@@ -730,6 +967,7 @@ class StrategyCarbonComparison:
             'battery_storage_actions': 0,
             'carbon_intensity_avg': 0,
             'home_load_avg': 0,
+            'comfort_score_sum': 0,
             'high_carbon_purchase': 0,  # 高碳时段购电量
             'low_carbon_purchase': 0,   # 低碳时段购电量
             'ev_initial_soc': state['ev_battery_state'] / 24,
@@ -766,6 +1004,10 @@ class StrategyCarbonComparison:
             episode_data['total_grid_sale'] += grid_sale
             episode_data['carbon_intensity_avg'] += carbon_intensity
             episode_data['home_load_avg'] += abs(total_home_load)
+
+            # 成本（按购电量与电价计价；grid_purchase 已含0.5h步长系数）
+            step_cost = grid_purchase * state['electricity_price']
+            episode_data['total_cost'] += step_cost
             
             # 记录高碳/低碳时段的购电量
             if carbon_intensity >= 0.9:  # 高碳时段
@@ -788,6 +1030,30 @@ class StrategyCarbonComparison:
             
             # 更新状态
             state = next_state
+
+            # 舒适度（基于室温偏好与热水温度范围的简单指标）
+            try:
+                temp_diff1 = abs(state.get('indoor_temp', 24) - state.get('user_temp_preference', 24))
+                temp_diff2 = abs(state.get('indoor_temp2', 24) - state.get('user_temp_preference2', 24))
+                temp_comfort1 = max(0, 1 - max(0, temp_diff1 - 2) / 8)
+                temp_comfort2 = max(0, 1 - max(0, temp_diff2 - 2) / 8)
+
+                ewh_temp = state.get('ewh_temp', 50)
+                hour = int(state.get('time_index', 0) // 2)
+                if 6 <= hour <= 9 or 18 <= hour <= 22:
+                    low_temp, high_temp = 50, 60
+                else:
+                    low_temp, high_temp = 40, 50
+                if low_temp <= ewh_temp <= high_temp:
+                    ewh_temp_comfort = 1.0
+                else:
+                    deviation = max(low_temp - ewh_temp, ewh_temp - high_temp)
+                    ewh_temp_comfort = max(0, 1 - deviation / 10)
+
+                comfort_step = (temp_comfort1 + temp_comfort2 + ewh_temp_comfort) / 3.0
+                episode_data['comfort_score_sum'] += comfort_step
+            except Exception:
+                pass
         
         # 记录最终SOC
         episode_data['ev_final_soc'] = state['ev_battery_state'] / 24
@@ -796,6 +1062,7 @@ class StrategyCarbonComparison:
         # 计算平均值
         episode_data['carbon_intensity_avg'] /= self.episode_length
         episode_data['home_load_avg'] /= self.episode_length
+        episode_data['comfort_score_avg'] = episode_data['comfort_score_sum'] / self.episode_length
         
         return episode_data
     
@@ -845,6 +1112,7 @@ class StrategyCarbonComparison:
             df = pd.DataFrame(results)
             results_summary[group_key] = {
                 'avg_carbon': df['total_carbon'].mean(),
+                'avg_cost': df['total_cost'].mean(),
                 'avg_grid_purchase': df['total_grid_purchase'].mean(),
                 'avg_grid_sale': df['total_grid_sale'].mean(),
                 'avg_ev_charge': df['ev_charge_energy'].mean(),
@@ -855,6 +1123,7 @@ class StrategyCarbonComparison:
                 'avg_low_carbon_purchase': df['low_carbon_purchase'].mean(),
                 'avg_vehicle_storage_actions': df['vehicle_storage_actions'].mean(),
                 'avg_battery_storage_actions': df['battery_storage_actions'].mean(),
+                'avg_comfort': df['comfort_score_avg'].mean(),
                 'strategy': df['strategy'].iloc[0],
                 'configuration': df['configuration'].iloc[0]
             }
@@ -903,69 +1172,70 @@ class StrategyCarbonComparison:
         return results_summary, df_all
     
     def create_visualization(self, results_summary):
-        """创建可视化图表"""
+        """创建可视化图表：分别绘制碳排放、成本、满意度（各一张图）"""
         plt.style.use('default')
-        fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-        
-        # 算法策略的碳排放对比
         strategies = list(self.strategies.keys())
-        strategy_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57']
-        
-        carbons = []
-        strategy_names = []
-        colors = []
-        
+        # 固定配色映射（最初配色风格，且与模型名称一一对应）
+        color_map = {
+            'random': '#FF6B6B',      # Random
+            'proposed_rl': '#4ECDC4', # PPO (Proposed RL)
+            'rainbow_dqn': '#45B7D1', # Rainbow DQN
+            'ddpg': '#96CEB4',        # DDPG
+            'td3': '#FECA57',         # TD3
+            'sac': '#9B59B6',         # SAC
+        }
+        default_color = '#34495E'
+
+        # 抽取数据
+        names, carbons, costs, comforts, colors = [], [], [], [], []
         for i, strategy_key in enumerate(strategies):
             group_key = f"{strategy_key}_full_optimization"
-            if group_key in results_summary:
-                carbons.append(results_summary[group_key]['avg_carbon'])
-                # 解决中文显示问题：使用简洁的英文名称
-                if strategy_key == 'random':
-                    strategy_names.append('Random Strategy')
-                elif strategy_key == 'proposed_rl':
-                    strategy_names.append('PPO Algorithm')
-                elif strategy_key == 'rainbow_dqn':
-                    strategy_names.append('Rainbow DQN Algorithm')
-                elif strategy_key == 'ddpg':
-                    strategy_names.append('DDPG Algorithm')
-                elif strategy_key == 'td3':
-                    strategy_names.append('TD3 Algorithm')
-                elif strategy_key == 'sac':
-                    strategy_names.append('SAC Algorithm')
-                else:
-                    # 默认使用策略key的英文形式
-                    strategy_names.append(strategy_key.upper() + ' Algorithm')
-                colors.append(strategy_colors[i % len(strategy_colors)])
-        
-        x = np.arange(len(strategy_names))
-        bars = ax.bar(x, carbons, color=colors, alpha=0.8, edgecolor='black', width=0.6)
-        
-        # 添加数值标签
-        for bar in bars:
-            height = bar.get_height()
-            if height > 0:
-                ax.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
-                        f'{height:.2f}', ha='center', va='bottom', fontsize=12, fontweight='bold')
-        
-        ax.set_ylabel('Carbon Emissions (kg CO2)', fontweight='bold', fontsize=12)
-        ax.set_title('Carbon Emissions Comparison of Different Algorithms', fontweight='bold', fontsize=16)
-        ax.set_xticks(x)
-        ax.set_xticklabels(strategy_names, fontsize=12)
-        ax.grid(True, alpha=0.3, axis='y')
-        
-        # 设置y轴范围，留出空间显示数值标签
-        if carbons:
-            max_carbon = max(carbons)
-            ax.set_ylim(0, max_carbon * 1.1)
-        
-        plt.tight_layout()
-        # 确保figures目录存在
-        figures_dir = os.path.join(self.project_root, 'figures', 'experiment_results')
-        os.makedirs(figures_dir, exist_ok=True)
-        figures_path = os.path.join(figures_dir, 'strategy_carbon_comparison.png')
-        plt.savefig(figures_path, dpi=300, bbox_inches='tight')
-        plt.close()  # 关闭图形以释放内存
-        print(f"\n📊 图表已保存为: strategy_carbon_comparison.png")
+            if group_key not in results_summary:
+                continue
+            summary = results_summary[group_key]
+            names.append({
+                'random': 'Random',
+                'proposed_rl': 'Proposed RL',
+                'rainbow_dqn': 'Rainbow DQN',
+                'ddpg': 'DDPG',
+                'td3': 'TD3',
+                'sac': 'SAC',
+            }.get(strategy_key, strategy_key.upper()))
+            carbons.append(summary.get('avg_carbon', 0.0))
+            costs.append(summary.get('avg_cost', 0.0))
+            comforts.append(summary.get('avg_comfort', 0.0))
+            colors.append(color_map.get(strategy_key, default_color))
+
+        x = np.arange(len(names))
+
+        def draw_bar(values, ylabel, title, filename, ylim=None):
+            fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+            bars = ax.bar(x, values, color=colors, alpha=0.85, edgecolor='black', width=0.6)
+            for bar in bars:
+                h = bar.get_height()
+                if h >= 0:
+                    ax.text(bar.get_x() + bar.get_width()/2., h + max(h * 0.01, 1e-6), f'{h:.2f}', ha='center', va='bottom', fontsize=11)
+            ax.set_ylabel(ylabel, fontweight='bold', fontsize=12)
+            ax.set_title(title, fontweight='bold', fontsize=16)
+            ax.set_xticks(x)
+            ax.set_xticklabels(names, fontsize=11)
+            ax.grid(True, alpha=0.3, axis='y')
+            if ylim is not None:
+                ax.set_ylim(*ylim)
+            elif values:
+                ax.set_ylim(0, max(values) * 1.1 if max(values) > 0 else 1)
+            plt.tight_layout()
+            figures_dir = os.path.join(self.project_root, 'figures', 'experiment_results')
+            os.makedirs(figures_dir, exist_ok=True)
+            path = os.path.join(figures_dir, filename)
+            plt.savefig(path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"📊 图表已保存为: {filename}")
+
+        # 分别绘制三张图
+        draw_bar(carbons, 'Carbon (kg CO2)', 'Carbon Emissions', 'strategy_carbon.png')
+        draw_bar(costs, 'Cost', 'Energy Cost', 'strategy_cost.png')
+        draw_bar(comforts, 'Comfort (0-1)', 'User Comfort', 'strategy_comfort.png', ylim=(0, 1.05))
     
     def save_results(self, results_summary):
         """保存实验结果"""

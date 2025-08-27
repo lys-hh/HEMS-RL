@@ -12,7 +12,7 @@ os.makedirs('save_pictures', exist_ok=True)
 
 # 算法数据文件配置
 algorithm_files = {
-    "Proposed RL (PPO)": "model/results/returns_ppo_20250709_144004_norm_unconstrained.csv",
+    "Proposed RL": "model/results/returns_ppo_20250709_144004_norm_unconstrained.csv",
     "TD3": "model/results/returns_td3_20250729_221518.csv",
     # "SAC2": "model/results/returns_sac_20250730_194256.csv",
     # "SAC3": "model/results/returns_sac_20250724_183720.csv",
@@ -24,14 +24,11 @@ algorithm_files = {
 
 # 颜色方案
 colors = {
-    "Proposed RL (PPO)": '#1f78b4',
-    "TD3": '#ff7f0e',
-    "SAC2": '#ff6b35',
-    "SAC3": '#ff5722', 
-    "SAC": '#e64a19',
-    "SAC5": '#d84315',
-    "DDPG": '#2ca02c',
-    "Rainbow DQN": '#9c27b0'  # 紫色，用于Rainbow DQN
+    "Proposed RL": '#4ECDC4',
+    "TD3": '#FECA57',
+    "SAC": '#9B59B6',
+    "DDPG": '#96CEB4',
+    "Rainbow DQN": '#45B7D1'  
 }
 
 def load_and_process_data():
