@@ -13,7 +13,7 @@ from datetime import datetime
 import matplotlib
 matplotlib.use('Agg')
 
-# 添加项目根目录到Python路径（使用相对路径）
+# Add project root directory to Python path (using relative path)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
@@ -21,7 +21,7 @@ sys.path.append(project_root)
 from environment import HomeEnergyManagementEnv
 from collections import OrderedDict
 
-# ========== 状态归一化工具 ==========
+# ========== State Normalization Utility ==========
 class RunningStats:
     def __init__(self, shape):
         self.mean = np.zeros(shape, dtype=np.float32)
@@ -46,18 +46,18 @@ class RunningStats:
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 创建结果目录（与PPO相同）
+# Create results directory (same as PPO)
 results_dir = "model/results"
 os.makedirs(results_dir, exist_ok=True)
 
-# 定义状态键（与PPO相同）
+# Define state keys (same as PPO)
 state_keys = [
     'home_load', 'pv_generation', 'ess_state', 'ev_battery_state',
     'time_index', 'electricity_price', 'temperature',
     'wash_machine_state', 'Air_conditioner_power', 'Air_conditioner_power2', 'ewh_temp', 'ewh_power'
 ]
 
-# 使用PPO的动作空间（与PPO相同）
+# Use PPO action space (same as PPO)
 action_space_config = {
     'ev_power': [-6.6, -3.3, 0, 3.3, 6.6],
     'battery_power': [-4.4, -2.2, 0, 2.2, 4.4],
@@ -67,16 +67,16 @@ action_space_config = {
     'ewh_set_temp': [40, 45, 50, 55, 60, 65, 70]
 }
 
-# 动作键列表
+# Action key list
 action_keys = list(action_space_config.keys())
 
 
 class ActionConverter:
-    """将连续动作转换为环境需要的混合动作"""
+    """Convert continuous actions to mixed actions required by environment"""
 
     def __init__(self, action_space_config):
         self.action_map = action_space_config
-        # 创建反向映射：动作值 -> 索引
+        # Create reverse mapping: action value -> index
         self.value_to_index = {}
         for device, values in self.action_map.items():
             self.value_to_index[device] = {val: idx for idx, val in enumerate(values)}
@@ -136,7 +136,7 @@ class TD3:
         self.action_dim = action_dim
         self.converter = ActionConverter(action_space_config)
 
-        # 初始化网络
+        # Initialize networks
         self.actor = Actor(state_dim, action_dim).to(device)
         self.actor_target = Actor(state_dim, action_dim).to(device)
         self.actor_target.load_state_dict(OrderedDict(self.actor.state_dict()))
@@ -148,34 +148,34 @@ class TD3:
         self.critic1_target.load_state_dict(OrderedDict(self.critic1.state_dict()))
         self.critic2_target.load_state_dict(OrderedDict(self.critic2.state_dict()))
 
-        # 优化器
+        # Optimizer
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=1e-5)
         self.critic_optimizer = optim.Adam(
             list(self.critic1.parameters()) + list(self.critic2.parameters()),
             lr=3e-5
         )
 
-        # 超参数
+        # Hyperparameters
         self.batch_size = 1024
-        self.gamma = 0.96  # 与PPO相同的gamma
+        self.gamma = 0.96  # Same gamma as PPO
         self.tau = 0.005
-        self.noise_std = 0.5  # 初始噪声，后续动态调整
+        self.noise_std = 0.5  # Initial noise, dynamically adjusted later
         self.noise_clip = 0.5
         self.update_freq = 2
         self.replay_buffer = deque(maxlen=1000000)
-        self.return_list = []  # 记录每个episode的回报
-        self.critic_loss_list = []  # 记录critic损失
-        self.actor_loss_list = []  # 记录actor损失
-        # 新增：reward归一化参数
-        self.reward_scale = 5.0  # reward缩放因子
-        self.q_clip = 500.0  # Q值裁剪阈值
-        # 状态归一化
+        self.return_list = []  # Record return for each episode
+        self.critic_loss_list = []  # Record critic loss
+        self.actor_loss_list = []  # Record actor loss
+        # New: reward normalization parameters
+        self.reward_scale = 5.0  # Reward scaling factor
+        self.q_clip = 500.0  # Q value clipping threshold
+        # State normalization
         self.state_stats = RunningStats(state_dim)
         self.use_state_norm = True
         self.state_dim = state_dim
 
     def _state_to_list(self, state_dict):
-        """将状态字典转换为列表"""
+        """Convert state dictionary to list"""
         return [state_dict[k] for k in state_keys]
 
     def _normalize_state(self, state_list):
@@ -185,7 +185,7 @@ class TD3:
             return np.array(state_list)
 
     def get_action(self, state_dict, action_mask=None, add_noise=True, return_continuous=False):
-        """修改后的动作获取方法，支持动作掩码，可返回连续动作"""
+        """Modified action acquisition method, supports action mask, can return continuous actions"""
         state = self._state_to_list(state_dict)
         norm_state = self._normalize_state(state)
         state_tensor = torch.FloatTensor(norm_state).unsqueeze(0).to(device)
@@ -197,10 +197,10 @@ class TD3:
             noise = np.random.normal(0, self.noise_std, size=cont_action.shape)
             cont_action = np.clip(cont_action + noise, -1, 1)
 
-        # 转换为离散动作
+        # Convert to discrete action
         disc_action = self.converter.continuous_to_discrete(cont_action)
 
-        # 应用动作掩码（如果提供）
+        # Apply action mask (if provided)
         if action_mask:
             for device_name, mask_list in action_mask.items():
                 if device_name in disc_action:
@@ -232,9 +232,9 @@ class TD3:
             states = torch.FloatTensor(self.state_stats.normalize(states_raw)).to(device)
         else:
             states = torch.FloatTensor(states_raw).to(device)
-        # 直接用连续动作向量
+        # Directly use continuous action vector
         actions = torch.FloatTensor(np.array([x[1] for x in batch])).to(device)
-        # Reward归一化
+        # Reward normalization
         raw_rewards = np.array([x[2] for x in batch])
         rewards = torch.FloatTensor(raw_rewards / self.reward_scale).to(device)
         next_states_raw = np.array([self._state_to_list(x[3]) for x in batch])
@@ -250,17 +250,17 @@ class TD3:
             target_cont_actions = torch.clamp(target_cont_actions + noise, -1, 1)
             target_Q1 = self.critic1_target(next_states, target_cont_actions)
             target_Q2 = self.critic2_target(next_states, target_cont_actions)
-            # Q值裁剪，防止极端值
+            # Q value clipping to prevent extreme values
             target_Q1 = torch.clamp(target_Q1, -self.q_clip, self.q_clip)
             target_Q2 = torch.clamp(target_Q2, -self.q_clip, self.q_clip)
             target_Q = torch.min(target_Q1, target_Q2)
             target_Q = rewards.unsqueeze(1) + (1 - dones.unsqueeze(1)) * self.gamma * target_Q
         current_Q1 = self.critic1(states, actions)
         current_Q2 = self.critic2(states, actions)
-        # 当前Q值也裁剪
+        # Also clip current Q values
         current_Q1 = torch.clamp(current_Q1, -self.q_clip, self.q_clip)
         current_Q2 = torch.clamp(current_Q2, -self.q_clip, self.q_clip)
-        # Critic L2正则项
+        # Critic L2 regularization term
         l2_lambda = 5e-5
         l2_reg = torch.tensor(0., device=states.device)
         for param in self.critic1.parameters():
@@ -270,7 +270,7 @@ class TD3:
         critic_loss = nn.MSELoss()(current_Q1, target_Q) + nn.MSELoss()(current_Q2, target_Q) + l2_lambda * l2_reg
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
-        # 更严格的梯度裁剪
+        # Stricter gradient clipping
         clip_grad_norm_(self.critic1.parameters(), 0.1)
         clip_grad_norm_(self.critic2.parameters(), 0.1)
         self.critic_optimizer.step()
@@ -282,7 +282,7 @@ class TD3:
             actor_loss = -q_values.mean()
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
-            # 更严格的梯度裁剪
+            # Stricter gradient clipping
             clip_grad_norm_(self.actor.parameters(), 0.1)
             self.actor_optimizer.step()
             for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
@@ -300,7 +300,7 @@ class TD3:
         results_dir = "model/results"
         os.makedirs(results_dir, exist_ok=True)
         csv_filename = os.path.join(results_dir, f"returns_td3_{timestamp}.csv")
-        # 写入TD3风格的表头（参考Rainbow DQN格式）
+        # Write TD3-style header (refer to Rainbow DQN format)
         with open(csv_filename, mode='w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow([
@@ -316,7 +316,7 @@ class TD3:
                 episode_critic_loss = 0
                 episode_actor_loss = 0
                 update_steps = 0
-                # ========== 指标收集 ========== #
+                # ========== Metric Collection ========== #
                 episode_ess_violations = 0
                 episode_ev_violations = 0
                 episode_ess_violations_count = 0
@@ -330,25 +330,25 @@ class TD3:
                 episode_temperature_comforts = []
                 episode_peak_valley_arbitrages = []
                 step_count = 0
-                # ========== 状态归一化预热 ========== #
+                # ========== State Normalization Warm-up ========== #
                 if self.use_state_norm and ep < 10:
-                    # 预热阶段，收集状态样本
+                    # Warm-up phase, collect state samples
                     for _ in range(100):
                         s = env.reset()
                         s_list = self._state_to_list(s)
                         self.state_stats.update(np.array([s_list]))
-                # 新增：温度舒适度统计
+                # New: temperature comfort statistics
                 ac1_temp_comforts = []
                 ac2_temp_comforts = []
                 ewh_temp_comforts = []
                 while not done:
-                    # 前2000步噪声0.5，后续0.2
+                    # First 2000 steps noise 0.5, later 0.2
                     self.noise_std = 0.5 if ep < 2000 else 0.2
                     action_mask = env.get_action_mask(state)
                     cont_action, disc_action = self.get_action(state, action_mask=action_mask, return_continuous=True)
                     next_state, reward, done = env.step(state, disc_action)
                     self.replay_buffer.append((state, cont_action, reward, next_state, done))
-                    # ========== 指标收集 ========== #
+                    # ========== Metric Collection ========== #
                     state_dict = state if isinstance(state, dict) else {}
                     next_state_dict = next_state if isinstance(next_state, dict) else {}
                     ess_soc = state_dict.get('ess_state', 0) / getattr(env, 'ess_capacity', 24)
@@ -437,7 +437,7 @@ class TD3:
                 self.critic_loss_list.append(avg_critic)
                 self.actor_loss_list.append(avg_actor)
                 episode_returns.append(episode_reward)
-                # ========== 统计指标计算 ========== #
+                # ========== Statistical Metrics Calculation ========== #
                 ess_violation_rate = episode_ess_violations / step_count if step_count > 0 else 0
                 ev_violation_rate = episode_ev_violations / step_count if step_count > 0 else 0
                 total_violation_rate = (ess_violation_rate + ev_violation_rate) / 2 if step_count > 0 else 0
@@ -449,7 +449,7 @@ class TD3:
                 ewh_temp_comfort = np.mean(ewh_temp_comforts) if ewh_temp_comforts else 0
                 current_lr = self.actor_optimizer.param_groups[0]['lr']
                 
-                # 写入一行
+                # Write one row
                 writer.writerow([
                     ep + 1, episode_reward, avg_actor, avg_critic, ess_violation_rate, ev_violation_rate, total_violation_rate,
                     energy_cost, user_satisfaction, temperature_comfort,
@@ -460,7 +460,7 @@ class TD3:
                       f"Actor Loss: {avg_actor:.4f}, Critic Loss: {avg_critic:.4f}, "
                       f"Violation: {total_violation_rate:.3f}, Cost: {energy_cost:.2f}, LR: {current_lr:.6f}")
         
-        # ========== TD3模型保存逻辑 ==========
+        # ========== TD3 Model Saving Logic ==========
         model_save_dir = "model/saved_models"
         os.makedirs(model_save_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -495,31 +495,31 @@ class TD3:
             }
         }
         
-        # 如果使用了状态归一化，保存状态统计信息
+        # If state normalization is used, save state statistics
         if self.use_state_norm:
             model_save_dict['state_stats_mean'] = self.state_stats.mean
             model_save_dict['state_stats_var'] = self.state_stats.var
             model_save_dict['state_stats_count'] = self.state_stats.count
         
         torch.save(model_save_dict, model_filename)
-        print(f"TD3模型已保存到: {model_filename}")
+        print(f"TD3 model saved to: {model_filename}")
         
         env.visualize()
         self.plot_returns()
         env.save_episode_costs()
         env.plot_reward_components()
-        print(f"TD3训练完成！Returns数据已保存到: {csv_filename}")
+        print(f"TD3 training completed! Returns data saved to: {csv_filename}")
 
     def load_model(self, model_path):
-        """加载保存的TD3模型"""
+        """Load saved TD3 model"""
         if not os.path.exists(model_path):
-            print(f"模型文件不存在: {model_path}")
+            print(f"Model file does not exist: {model_path}")
             return False
         
         try:
             checkpoint = torch.load(model_path, map_location=device)
             
-            # 加载网络状态
+            # Load network state
             self.actor.load_state_dict(checkpoint['actor_state_dict'])
             self.critic1.load_state_dict(checkpoint['critic1_state_dict'])
             self.critic2.load_state_dict(checkpoint['critic2_state_dict'])
@@ -527,25 +527,25 @@ class TD3:
             self.critic1_target.load_state_dict(checkpoint['target_critic1_state_dict'])
             self.critic2_target.load_state_dict(checkpoint['target_critic2_state_dict'])
             
-            # 加载优化器状态
+            # Load optimizer state
             self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state_dict'])
             self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state_dict'])
             
-            # 加载状态归一化统计信息
+            # Load state normalization statistics
             if 'state_stats_mean' in checkpoint and self.use_state_norm:
                 self.state_stats.mean = checkpoint['state_stats_mean']
                 self.state_stats.var = checkpoint['state_stats_var']
                 self.state_stats.count = checkpoint['state_stats_count']
             
-            print(f"TD3模型已成功加载: {model_path}")
+            print(f"TD3 model successfully loaded: {model_path}")
             return True
             
         except Exception as e:
-            print(f"加载模型时出错: {e}")
+            print(f"Error loading model: {e}")
             return False
 
     def plot_returns(self):
-        """绘制回报曲线并保存到结果目录"""
+        """Plot return curve and save to results directory"""
         return_list = self.return_list
         window_size = 9
 
@@ -568,12 +568,12 @@ class TD3:
         plt.legend()
         plt.grid(True)
 
-        # 保存图像到结果目录
+        # Save image to results directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         plt.savefig(f"figures/training_progress/td3_returns_{timestamp}.png")
         plt.close()
 
-        # 绘制损失曲线
+        # Plot loss curves
         plt.figure(figsize=(12, 6))
         plt.plot(self.critic_loss_list, label='Critic Loss', color='red')
         plt.plot(self.actor_loss_list, label='Actor Loss', color='blue')
@@ -591,7 +591,7 @@ if __name__ == "__main__":
     sample_state = env.reset()
 
     state_dim = len([sample_state[k] for k in state_keys])
-    action_dim = len(action_keys)  # 动作维度等于动作键的数量
+    action_dim = len(action_keys)  # Action dimension equals number of action keys
 
     agent = TD3(state_dim, action_dim, action_space_config)
     agent.train(env, episodes=5000)

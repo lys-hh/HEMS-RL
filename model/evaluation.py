@@ -1,16 +1,16 @@
 '''
 Algorithm Comparison Evaluation
-绘制不同强化学习算法的回报对比图
+Plot return comparison charts for different reinforcement learning algorithms
 '''
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-# 创建保存图片的目录
+# Create directory to save images
 os.makedirs('save_pictures', exist_ok=True)
 
-# 算法数据文件配置
+# Algorithm data file configuration
 algorithm_files = {
     "Proposed RL": "model/results/returns_ppo_20250709_144004_norm_unconstrained.csv",
     "TD3": "model/results/returns_td3_20250729_221518.csv",
@@ -22,7 +22,7 @@ algorithm_files = {
     "DDPG": "model/results/returns_ddpg_20250726_173145_no_norm.csv"
 }
 
-# 颜色方案
+# Color scheme
 colors = {
     "Proposed RL": '#4ECDC4',
     "TD3": '#FECA57',
@@ -32,7 +32,7 @@ colors = {
 }
 
 def load_and_process_data():
-    """加载并处理所有算法的数据"""
+    """Load and process data for all algorithms"""
     data = {}
     
     for algorithm, file_path in algorithm_files.items():
@@ -45,33 +45,33 @@ def load_and_process_data():
                     'costs': df['Energy_Cost'].values if 'Energy_Cost' in df.columns else None,
                     'satisfaction': df['User_Satisfaction'].values if 'User_Satisfaction' in df.columns else None
                 }
-                print(f"成功加载 {algorithm}: {len(df)} 个episodes")
+                print(f"Successfully loaded {algorithm}: {len(df)} episodes")
             else:
-                print(f"警告: {algorithm} 文件中没有找到 'Return' 列")
+                print(f"Warning: 'Return' column not found in {algorithm} file")
         except Exception as e:
-            print(f"错误: 无法加载 {algorithm} 文件: {e}")
+            print(f"Error: Failed to load {algorithm} file: {e}")
     
     return data
 
 def smooth_curve(y, window=50):
-    """平滑曲线函数"""
+    """Smooth curve function"""
     return np.convolve(y, np.ones(window)/window, mode='valid')
 
 def plot_algorithm_comparison(data):
-    """绘制算法对比图"""
+    """Plot algorithm comparison chart"""
     
-    # 创建2x2的子图布局
+    # Create 2x2 subplot layout
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     
-    # 1. 回报对比 (左上)
+    # 1. Return comparison (top left)
     for algorithm, data_dict in data.items():
         episodes = data_dict['episodes']
         returns = data_dict['returns']
         
-        # 绘制原始数据（透明度较低）
+        # Plot original data (lower opacity)
         axes[0, 0].plot(episodes, returns, color=colors[algorithm], alpha=0.3, linewidth=1)
         
-        # 绘制平滑曲线
+        # Plot smoothed curve
         if len(returns) >= 50:
             smoothed_returns = smooth_curve(returns)
             smoothed_episodes = episodes[49:len(smoothed_returns)+49]
@@ -89,16 +89,16 @@ def plot_algorithm_comparison(data):
     axes[0, 0].text(-0.2, 1.1, 'a', transform=axes[0, 0].transAxes, 
                      fontsize=24, fontweight='bold', verticalalignment='top', horizontalalignment='left')
     
-    # 2. 成本对比 (右上)
+    # 2. Cost comparison (top right)
     for algorithm, data_dict in data.items():
         if data_dict['costs'] is not None:
             episodes = data_dict['episodes']
             costs = data_dict['costs']
             
-            # 绘制原始数据
+            # Plot original data
             axes[0, 1].plot(episodes, costs, color=colors[algorithm], alpha=0.3, linewidth=1)
             
-            # 绘制平滑曲线
+            # Plot smoothed curve
             if len(costs) >= 50:
                 smoothed_costs = smooth_curve(costs)
                 smoothed_episodes = episodes[49:len(smoothed_costs)+49]
@@ -116,16 +116,16 @@ def plot_algorithm_comparison(data):
     axes[0, 1].text(-0.2, 1.1, 'b', transform=axes[0, 1].transAxes, 
                      fontsize=24, fontweight='bold', verticalalignment='top', horizontalalignment='left')
     
-    # 3. 用户满意度对比 (左下)
+    # 3. User satisfaction comparison (bottom left)
     for algorithm, data_dict in data.items():
         if data_dict['satisfaction'] is not None:
             episodes = data_dict['episodes']
             satisfaction = data_dict['satisfaction']
             
-            # 绘制原始数据
+            # Plot original data
             axes[1, 0].plot(episodes, satisfaction, color=colors[algorithm], alpha=0.3, linewidth=1)
             
-            # 绘制平滑曲线
+            # Plot smoothed curve
             if len(satisfaction) >= 50:
                 smoothed_satisfaction = smooth_curve(satisfaction)
                 smoothed_episodes = episodes[49:len(smoothed_satisfaction)+49]
@@ -143,13 +143,13 @@ def plot_algorithm_comparison(data):
     axes[1, 0].text(-0.2, 1.1, 'c', transform=axes[1, 0].transAxes, 
                      fontsize=24, fontweight='bold', verticalalignment='top', horizontalalignment='left')
     
-    # 4. 最终性能对比柱状图 (右下)
+    # 4. Final performance comparison bar chart (bottom right)
     final_returns = []
     algorithm_names = []
     
     for algorithm, data_dict in data.items():
         if len(data_dict['returns']) > 0:
-            # 取最后100个episode的平均值作为最终性能
+            # Take average of last 100 episodes as final performance
             final_100_returns = data_dict['returns'][-100:] if len(data_dict['returns']) >= 100 else data_dict['returns']
             final_returns.append(np.mean(final_100_returns))
             algorithm_names.append(algorithm)
@@ -168,21 +168,21 @@ def plot_algorithm_comparison(data):
     plt.savefig('figures/algorithm_comparison/algorithm_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    print("算法对比图已保存为: figures/algorithm_comparison/algorithm_comparison.png")
+    print("Algorithm comparison chart saved as: figures/algorithm_comparison/algorithm_comparison.png")
 
 def plot_individual_metrics(data):
-    """绘制单独的指标对比图"""
+    """Plot individual metric comparison charts"""
     
-    # 回报对比图
+    # Return comparison chart
     plt.figure(figsize=(12, 8))
     for algorithm, data_dict in data.items():
         episodes = data_dict['episodes']
         returns = data_dict['returns']
         
-        # 绘制原始数据
+        # Plot raw data
         plt.plot(episodes, returns, color=colors[algorithm], alpha=0.3, linewidth=1)
         
-        # 绘制平滑曲线
+        # Plot smoothed curve
         if len(returns) >= 50:
             smoothed_returns = smooth_curve(returns)
             smoothed_episodes = episodes[49:len(smoothed_returns)+49]
@@ -201,28 +201,28 @@ def plot_individual_metrics(data):
     plt.savefig('figures/algorithm_comparison/return_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    print("回报对比图已保存为: figures/algorithm_comparison/return_comparison.png")
+    print("Return comparison chart saved as: figures/algorithm_comparison/return_comparison.png")
 
 def main():
-    """主函数"""
-    print("开始加载算法数据...")
+    """Main function"""
+    print("Starting to load algorithm data...")
     data = load_and_process_data()
     
     if not data:
-        print("错误: 没有成功加载任何数据")
+        print("Error: No data loaded successfully")
         return
     
-    print(f"成功加载 {len(data)} 个算法的数据")
+    print(f"Successfully loaded data for {len(data)} algorithms")
     
-    # 绘制综合对比图
-    print("绘制算法对比图...")
+    # Plot comprehensive comparison chart
+    print("Plotting algorithm comparison chart...")
     plot_algorithm_comparison(data)
     
-    # 绘制单独的回报对比图
-    print("绘制回报对比图...")
+    # Plot individual return comparison chart
+    print("Plotting return comparison chart...")
     plot_individual_metrics(data)
     
-    print("所有图片绘制完成!")
+    print("All plots generated!")
 
 if __name__ == "__main__":
     main() 

@@ -63,7 +63,10 @@ model/episode_cost_results/
 model/results/
 
 # Data files (if large)
+# Ignore CSV files except in data directory
 *.csv
+!data/
+!data/*.csv
 *.xlsx
 *.xls
 

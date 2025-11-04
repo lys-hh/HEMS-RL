@@ -1,5 +1,5 @@
 """
-独立网络层
+Independent network layers
 """
 import csv
 import os
@@ -16,7 +16,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from environment import HomeEnergyManagementEnv
 from model import rl_utils
-# 添加evaluation目录到路径（使用相对路径）
+# Add evaluation directory to path (using relative path)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(os.path.join(project_root, 'evaluation'))
@@ -28,7 +28,7 @@ class RunningStats:
     def __init__(self, shape):
         self.mean = torch.zeros(shape, device=device)
         self.std = torch.ones(shape, device=device)
-        self.count = 1e-4  # 防止除以零
+        self.count = 1e-4  # Prevent division by zero
 
     def update(self, x):
         batch_mean = x.mean(dim=0)
@@ -60,7 +60,7 @@ class PolicyNet(torch.nn.Module):
         )
         self.head = nn.Linear(hidden_dim, action_dim)
         
-        # 正交初始化
+        # Orthogonal initialization
         for layer in self.shared_backbone.modules():
             if isinstance(layer, nn.Linear):
                 nn.init.orthogonal_(layer.weight)
@@ -72,7 +72,7 @@ class PolicyNet(torch.nn.Module):
         shared_features = self.shared_backbone(x)
         return self.head(shared_features)
 
-# 改进后的价值网络（增加深度和Dropout）
+# Improved value network (increased depth and Dropout)
 class ValueNet(torch.nn.Module):
     def __init__(self, state_dim, hidden_dim):
         super().__init__()
@@ -86,22 +86,22 @@ class ValueNet(torch.nn.Module):
             nn.Linear(hidden_dim, 1)
         )
         
-        # 正交初始化
+        # Orthogonal initialization
         for layer in self.net.modules():
             if isinstance(layer, nn.Linear):
                 nn.init.orthogonal_(layer.weight)
                 layer.bias.data.zero_()
 
     def forward(self, x):
-        return self.net(x).squeeze(-1)  # 关键修改：压缩最后一个维度
+        return self.net(x).squeeze(-1)  # Key modification: squeeze last dimension
 
 class MultiAgentPPO:
     def __init__(self, env, state_dim, hidden_dim, action_dim_ev, action_dim_ess, action_dim_wash, action_dim_ac, action_dim_water,
                   epochs, lmbda, eps, gamma, device, constraints, ent_coef, max_grad_norm, constraint_config=None, constraint_mode="none",
                   use_state_normalization=False, use_advantage_normalization=False, use_dynamic_mask=False):
         
-        self.lr_actor = 2e-5  # 调整为与PPO3一致
-        self.lr_critic = 3e-5  # 调整为与PPO3一致
+        self.lr_actor = 2e-5  # Adjusted to match PPO3
+        self.lr_critic = 3e-5  # Adjusted to match PPO3
         self.env = env
         self.actor_ev = PolicyNet(state_dim, hidden_dim, action_dim_ev).to(device)
         self.actor_ess = PolicyNet(state_dim, hidden_dim, action_dim_ess).to(device)
@@ -111,7 +111,7 @@ class MultiAgentPPO:
         self.actor_water = PolicyNet(state_dim, hidden_dim, action_dim_water).to(device)
         self.critic = ValueNet(state_dim, hidden_dim).to(device)
         
-        # 使用AdamW优化器
+        # Use AdamW optimizer
         self.actor_ev_optimizer = torch.optim.AdamW(self.actor_ev.parameters(), lr=self.lr_actor)
         self.actor_ess_optimizer = torch.optim.AdamW(self.actor_ess.parameters(), lr=self.lr_actor)
         self.actor_wash_optimizer = torch.optim.AdamW(self.actor_wash.parameters(), lr=self.lr_actor)
@@ -120,7 +120,7 @@ class MultiAgentPPO:
         self.actor_water_optimizer = torch.optim.AdamW(self.actor_water.parameters(), lr=self.lr_actor)
         self.critic_optimizer = torch.optim.AdamW(self.critic.parameters(), lr=self.lr_critic)
         
-        # 学习率调度
+        # Learning rate scheduling
         self.actor_schedulers = {
             'ev': CosineAnnealingLR(self.actor_ev_optimizer, T_max=1000, eta_min=3e-5),
             'ess': CosineAnnealingLR(self.actor_ess_optimizer, T_max=1000, eta_min=3e-5),
@@ -140,13 +140,13 @@ class MultiAgentPPO:
             }
         self.constraint_config = constraint_config.copy()
         
-        # 添加缺失的属性
+        # Add missing attributes
         self.ess_capacity = env.ess_capacity
         self.ev_capacity = env.ev_capacity
         self.lambda_ess = torch.tensor(0.0, device=device)
         self.lambda_ev = torch.tensor(0.0, device=device)
         
-        # 动态目标熵设置
+        # Dynamic target entropy setting
         self.initial_target_entropy = np.mean([
             1 * np.log(action_dim_ev), 1 * np.log(action_dim_ess), 1 * np.log(action_dim_wash),
             1 * np.log(action_dim_ac), 1 * np.log(action_dim_ac), 1 * np.log(action_dim_water)
@@ -164,7 +164,7 @@ class MultiAgentPPO:
         self.device = device
         self.constraints = constraints
         self.lambda_ = torch.tensor([1.0] * len(constraints), device=device)
-        self.ent_coef = ent_coef  # 新增熵系数
+        self.ent_coef = ent_coef  # New entropy coefficient
         self.max_grad_norm = max_grad_norm
         self.ess_charge_from_home_record = []
         self.ess_charge_from_grid_record = []
@@ -184,14 +184,14 @@ class MultiAgentPPO:
     def take_action(self, state, action_mask=None, normalized_state=None):
         ev_at_home = self.env.is_ev_at_home()
         
-        # 使用归一化状态或原始状态
+        # Use normalized state or original state
         if normalized_state is not None:
             state_tensor = normalized_state
         else:
             state_values = [state[key] for key in sorted(state.keys()) if isinstance(state[key], (int, float))]
             state_tensor = torch.tensor([state_values], dtype=torch.float).to(self.device)
 
-        # EV 动作选择
+        # EV action selection
         ev_actions = self.actor_ev(state_tensor)
         if action_mask and 'ev_power' in action_mask:
             mask_tensor = torch.tensor(action_mask['ev_power'], dtype=torch.bool, device=ev_actions.device)
@@ -204,20 +204,20 @@ class MultiAgentPPO:
         ev_action_index = action_dist_ev.sample().item()
 
         if ev_at_home:
-            # 获取当前SOC和电价
+            # Get current SOC and electricity price
             current_soc = state['ev_battery_state'] / 24
             price = state['electricity_price']
             action_ev_power = self.env.action_space['ev_power'][ev_action_index]
-            # 动态限制充电行为
-            if current_soc > 0.95:  # 接近满电时禁止充电
+            # Dynamically limit charging behavior
+            if current_soc > 0.95:  # Prohibit charging when near full charge
                 action_ev_power = min(self.env.action_space['ev_power'][ev_action_index], 0)
-            # 动态限制放电行为
+            # Dynamically limit discharging behavior
             if current_soc < 0.05:
                 action_ev_power = max(self.env.action_space['ev_power'][ev_action_index], 0)
         else:
             action_ev_power = 0.0
 
-        # ESS 动作选择
+        # ESS action selection
         ess_actions = self.actor_ess(state_tensor)
         if action_mask and 'battery_power' in action_mask:
             mask_tensor = torch.tensor(action_mask['battery_power'], dtype=torch.bool, device=ess_actions.device)
@@ -235,7 +235,7 @@ class MultiAgentPPO:
         if state['ess_state'] < 0.5:
             action_ess_power = max(action_ess_power, 0)
 
-        # 洗衣机动作选择
+        # Washing machine action selection
         wash_actions = self.actor_wash(state_tensor)
         if action_mask and 'wash_machine_schedule' in action_mask:
             mask_tensor = torch.tensor(action_mask['wash_machine_schedule'], dtype=torch.bool, device=wash_actions.device)
@@ -247,7 +247,7 @@ class MultiAgentPPO:
         action_dist_wash = torch.distributions.Categorical(probs_wash)
         action_wash_machine = action_dist_wash.sample().item()
 
-        # 空调动作选择
+        # Air conditioner action selection
         ac_actions = self.actor_ac(state_tensor)
         if action_mask and 'Air_conditioner_set_temp' in action_mask:
             mask_tensor = torch.tensor(action_mask['Air_conditioner_set_temp'], dtype=torch.bool, device=ac_actions.device)
@@ -260,7 +260,7 @@ class MultiAgentPPO:
         ac_action_index = action_dist_ac.sample().item()
         action_ac_set_temp = self.env.action_space['Air_conditioner_set_temp'][ac_action_index]
 
-        # 空调2动作选择
+        # Air conditioner 2 action selection
         ac_actions2 = self.actor_ac2(state_tensor)
         if action_mask and 'Air_conditioner_set_temp2' in action_mask:
             mask_tensor = torch.tensor(action_mask['Air_conditioner_set_temp2'], dtype=torch.bool, device=ac_actions2.device)
@@ -273,7 +273,7 @@ class MultiAgentPPO:
         ac_action_index2 = action_dist_ac2.sample().item()
         action_ac_set_temp2 = self.env.action_space['Air_conditioner_set_temp'][ac_action_index2]
 
-        # 热水器动作选择
+        # Water heater action selection
         water_actions = self.actor_water(state_tensor)
         if action_mask and 'ewh_set_temp' in action_mask:
             mask_tensor = torch.tensor(action_mask['ewh_set_temp'], dtype=torch.bool, device=water_actions.device)
@@ -286,7 +286,7 @@ class MultiAgentPPO:
         water_action_index = action_dist_water.sample().item()
         action_water_set_temp = self.env.action_space['ewh_set_temp'][water_action_index]
 
-        # 收集所有动作
+        # Collect all actions
         actions = {
             'ev_power': action_ev_power,
             'battery_power': action_ess_power,
@@ -296,7 +296,7 @@ class MultiAgentPPO:
             'ewh_set_temp': action_water_set_temp
         }
 
-        # 计算总日志概率和熵
+        # Calculate total log probability and entropy
         log_probs = [
             action_dist_ev.log_prob(torch.tensor(ev_action_index, device=self.device)),
             action_dist_ess.log_prob(torch.tensor(ess_action_index, device=self.device)),
@@ -317,7 +317,7 @@ class MultiAgentPPO:
         ]
         total_entropy = torch.stack(entropies).sum()
         
-        # 计算价值
+        # Calculate value
         value = self.critic(state_tensor).item()
 
         return actions, total_log_prob, total_entropy, value
@@ -329,7 +329,7 @@ class MultiAgentPPO:
         next_states = torch.tensor(transition_dict['next_states'], dtype=torch.float).to(self.device)
         dones = torch.tensor(transition_dict['dones'], dtype=torch.float).view(-1, 1).to(self.device)
         
-        # 状态归一化处理
+        # State normalization processing
         if USE_STATE_NORMALIZATION and running_stats is not None:
             normalized_states = running_stats.normalize(states).clamp(-5, 5)
             normalized_next_states = running_stats.normalize(next_states).clamp(-5, 5)
@@ -337,29 +337,29 @@ class MultiAgentPPO:
             normalized_states = states
             normalized_next_states = next_states
         
-        # 计算当前价值和下一个价值
+        # Calculate current value and next value
         values = self.critic(normalized_states)
         with torch.no_grad():
             next_values = self.critic(normalized_next_states)
         
-        # 计算GAE
+        # Calculate GAE
         advantages = self.compute_gae2(rewards.squeeze(), values, next_values, dones.squeeze())
         if self.use_advantage_normalization:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
-        # 计算目标价值
+        # Calculate target value
         with torch.no_grad():
-            # 确保所有张量都是正确的形状
-            rewards_1d = rewards.squeeze(-1)  # 确保是1维
-            next_values_1d = next_values.squeeze(-1)  # 确保是1维
-            dones_1d = dones.squeeze(-1)  # 确保是1维
+            # Ensure all tensors have correct shape
+            rewards_1d = rewards.squeeze(-1)  # Ensure 1D
+            next_values_1d = next_values.squeeze(-1)  # Ensure 1D
+            dones_1d = dones.squeeze(-1)  # Ensure 1D
             
             td_target = rewards_1d + self.gamma * next_values_1d * (1 - dones_1d)
-            # 确保td_target是1维张量
+            # Ensure td_target is 1D tensor
             if td_target.dim() == 2:
                 td_target = td_target.squeeze(-1)
         
-        # 获取旧的动作概率（只计算一次，用于比率计算）
+        # Get old action probabilities (calculate once, used for ratio calculation)
         with torch.no_grad():
             old_ev_actions = self.actor_ev(states)
             old_ess_actions = self.actor_ess(states)
@@ -368,7 +368,7 @@ class MultiAgentPPO:
             old_ac_actions2 = self.actor_ac2(states)
             old_water_actions = self.actor_water(states)
         
-        # 确保动作索引在有效范围内
+        # Ensure action indices are within valid range
         ev_indices = torch.clamp(actions[:, 0].long(), 0, old_ev_actions.shape[1] - 1)
         ess_indices = torch.clamp(actions[:, 1].long(), 0, old_ess_actions.shape[1] - 1)
         wash_indices = torch.clamp(actions[:, 2].long(), 0, old_wash_actions.shape[1] - 1)
@@ -383,11 +383,11 @@ class MultiAgentPPO:
         log_probs_ac_old2 = F.log_softmax(old_ac_actions2, dim=1).gather(1, ac_indices2.unsqueeze(-1))
         log_probs_water_old = F.log_softmax(old_water_actions, dim=1).gather(1, water_indices.unsqueeze(-1))
         
-        # 存储每个epoch的损失用于返回
+        # Store losses for each epoch for return
         epoch_losses = []
         
         for _ in range(self.epochs):
-            # 每次epoch重新计算新的动作概率（避免重复使用计算图）
+            # Recalculate new action probabilities for each epoch (avoid reusing computation graph)
             new_ev_actions = self.actor_ev(normalized_states)
             new_ess_actions = self.actor_ess(normalized_states)
             new_wash_actions = self.actor_wash(normalized_states)
@@ -395,7 +395,7 @@ class MultiAgentPPO:
             new_ac_actions2 = self.actor_ac2(normalized_states)
             new_water_actions = self.actor_water(normalized_states)
 
-            # 计算新的日志概率
+            # Calculate new log probabilities
             log_probs_ev = F.log_softmax(new_ev_actions, dim=1).gather(1, ev_indices.unsqueeze(-1))
             log_probs_ess = F.log_softmax(new_ess_actions, dim=1).gather(1, ess_indices.unsqueeze(-1))
             log_probs_wash = F.log_softmax(new_wash_actions, dim=1).gather(1, wash_indices.unsqueeze(-1))
@@ -403,7 +403,7 @@ class MultiAgentPPO:
             log_probs_ac2 = F.log_softmax(new_ac_actions2, dim=1).gather(1, ac_indices2.unsqueeze(-1))
             log_probs_water = F.log_softmax(new_water_actions, dim=1).gather(1, water_indices.unsqueeze(-1))
 
-            # 计算比率和PPO损失 - 确保advantages被detach
+            # Calculate ratio and PPO loss - ensure advantages are detached
             advantages_detached = advantages.detach()
             ratio_ev = torch.exp(log_probs_ev - log_probs_ev_old.detach())
             surr1_ev = ratio_ev * advantages_detached
@@ -435,7 +435,7 @@ class MultiAgentPPO:
             surr2_water = torch.clamp(ratio_water, 1 - self.eps, 1 + self.eps) * advantages_detached
             actor_water_loss = -torch.mean(torch.min(surr1_water, surr2_water))
 
-            # 计算熵
+            # Calculate entropy
             entropy_ev = torch.distributions.Categorical(logits=new_ev_actions).entropy().mean()
             entropy_ess = torch.distributions.Categorical(logits=new_ess_actions).entropy().mean()
             entropy_wash = torch.distributions.Categorical(logits=new_wash_actions).entropy().mean()
@@ -448,19 +448,19 @@ class MultiAgentPPO:
                     0.1 * entropy_ac + 0.1 * entropy_ac2 + 0.2 * entropy_water
             )
 
-            # 动态调整目标熵
+            # Dynamically adjust target entropy
             if episode is not None and total_episodes is not None:
                 progress = min(1.0, episode / total_episodes)
                 self.target_entropy = self.initial_target_entropy * (1 - progress) + self.final_target_entropy * progress
 
-            # 自动熵调整
+            # Automatic entropy adjustment
             alpha_loss = -(self.log_alpha * (total_entropy - self.target_entropy)).mean()
             self.alpha_optim.zero_grad()
             alpha_loss.backward(retain_graph=True)
             self.alpha_optim.step()
             alpha = self.log_alpha.exp().detach().clamp(max=1.0)
 
-            # 约束处理
+            # Constraint handling
             constraint_loss = torch.tensor(0.0, device=self.device)
             if self.constraint_mode == "lagrangian":
                 ess_states = states[:, 2]
@@ -482,32 +482,32 @@ class MultiAgentPPO:
                         self.lambda_ev * ev_violation.mean()
                 )
 
-            # Critic损失 - 彻底修复维度不匹配问题
+            # Critic loss - completely fix dimension mismatch issue
             critic_values = self.critic(normalized_states)
             
-            # 确保td_target和critic_values都是1维张量，并且td_target被detach
+            # Ensure td_target and critic_values are both 1D tensors, and td_target is detached
             td_target_detached = td_target.detach()
             if td_target_detached.dim() == 2:
                 td_target_detached = td_target_detached.squeeze(-1)
             if critic_values.dim() == 2:
                 critic_values = critic_values.squeeze(-1)
             
-            # 确保两个张量形状完全一致
+            # Ensure both tensors have exactly the same shape
             assert td_target_detached.shape == critic_values.shape, f"Shape mismatch: td_target {td_target_detached.shape}, critic_values {critic_values.shape}"
             
             critic_loss = F.mse_loss(critic_values, td_target_detached)
 
-            # 总Actor损失
+            # Total Actor loss
             actor_loss = actor_ev_loss + actor_ess_loss + actor_wash_loss + actor_ac_loss + actor_ac_loss2 + actor_water_loss
 
-            # 总损失
+            # Total loss
             total_loss = (
                     actor_loss
                     + 0.5 * critic_loss
                     # + 2 * constraint_loss
             )
 
-            # 梯度清零
+            # Zero gradients
             self.actor_ev_optimizer.zero_grad()
             self.actor_ess_optimizer.zero_grad()
             self.actor_wash_optimizer.zero_grad()
@@ -516,10 +516,10 @@ class MultiAgentPPO:
             self.actor_water_optimizer.zero_grad()
             self.critic_optimizer.zero_grad()
 
-            # 反向传播
+            # Backward propagation
             total_loss.backward()
 
-            # 梯度裁剪
+            # Gradient clipping
             clip_grad_norm_(self.actor_ev.parameters(), self.max_grad_norm)
             clip_grad_norm_(self.actor_ess.parameters(), self.max_grad_norm)
             clip_grad_norm_(self.actor_wash.parameters(), self.max_grad_norm)
@@ -528,7 +528,7 @@ class MultiAgentPPO:
             clip_grad_norm_(self.actor_water.parameters(), self.max_grad_norm)
             clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
 
-            # 参数更新
+            # Parameter update
             self.actor_ev_optimizer.step()
             self.actor_ess_optimizer.step()
             self.actor_wash_optimizer.step()
@@ -537,10 +537,10 @@ class MultiAgentPPO:
             self.actor_water_optimizer.step()
             self.critic_optimizer.step()
 
-            # 记录损失
+            # Record loss
             epoch_losses.append(total_loss.item())
 
-        # 返回具体的损失值
+        # Return specific loss values
         if self.constraint_mode == "lagrangian":
             constraint_loss_value = constraint_loss.item()
         else:
@@ -581,20 +581,20 @@ class MultiAgentPPO:
 
         return torch.stack([ess_violation, ev_violation], dim=1)
 
-    # 在训练过程中可以动态衰减熵系数
+    # Can dynamically decay entropy coefficient during training
     def update_ent_coef(self, progress):
         initial_ent_coef = 0.1
         min_ent_coef = 0.01
         self.ent_coef = max(initial_ent_coef * (1 - progress), min_ent_coef)
 
 
-# ==================== 训练循环 ====================
+# ==================== Training Loop ====================
 if __name__ == "__main__":
-    # ==================== 配置参数（全部集中，便于实验和可读性） ====================
-    USE_STATE_NORMALIZATION = True  # 状态归一化开关
-    USE_ADVANTAGE_NORMALIZATION = True  # 优势归一化开关
-    USE_DYNAMIC_MASK = True  # 动态掩码开关
-    NUM_EPISODES = 5000  # 训练轮数
+    # ==================== Configuration Parameters (All centralized for easy experimentation and readability) ====================
+    USE_STATE_NORMALIZATION = True  # State normalization switch
+    USE_ADVANTAGE_NORMALIZATION = True  # Advantage normalization switch
+    USE_DYNAMIC_MASK = True  # Dynamic mask switch
+    NUM_EPISODES = 5000  # Number of training episodes
     HIDDEN_DIM = 128
     EPOCHS = 4
     LAMBDA = 0.98
@@ -603,13 +603,13 @@ if __name__ == "__main__":
     MAX_GRAD_NORM = 10
     ENT_COEF = 0.1
     
-    # 环境初始化
+    # Environment initialization
     env = HomeEnergyManagementEnv()
     env.seed(0)
     torch.manual_seed(0)
     np.random.seed(0)
 
-    # 智能体初始化
+    # Agent initialization
     state_dim = len(env.state_space)
     action_dim_ev = len(env.action_space['ev_power'])
     action_dim_ess = len(env.action_space['battery_power'])
@@ -645,15 +645,15 @@ if __name__ == "__main__":
         use_dynamic_mask=USE_DYNAMIC_MASK
     )
 
-    # 初始化 running_stats - 根据配置决定是否使用
+    # Initialize running_stats - decide whether to use based on configuration
     if USE_STATE_NORMALIZATION:
         running_stats = RunningStats(shape=len(env.state_space))
-        print("状态归一化已启用")
+        print("State normalization enabled")
     else:
         running_stats = None
-        print("状态归一化已禁用")
+        print("State normalization disabled")
 
-    # 定义动作空间用于预热
+    # Define action space for warm-up
     action_spaces = {
         'ev_power': [-6.6, -3.3, 0, 3.3, 6.6],
         'battery_power': [-4.4, -2.2, 0, 2.2, 4.4],
@@ -663,7 +663,7 @@ if __name__ == "__main__":
         'ewh_set_temp': [40, 45, 50, 55, 60, 65, 70]
     }
 
-    # 预热阶段：收集初始数据
+    # Warm-up phase: collect initial data
     if USE_STATE_NORMALIZATION:
         print("Warming up running_stats...")
         warmup_states = []
@@ -682,26 +682,26 @@ if __name__ == "__main__":
         if USE_STATE_NORMALIZATION and running_stats is not None:
             print(f"Running stats initialized: mean={running_stats.mean.cpu().numpy()}, std={running_stats.std.cpu().numpy()}")
     else:
-        print("跳过状态归一化预热阶段")
+        print("Skipping state normalization warm-up phase")
         state = env.reset()
         state_keys = sorted(env.state_space.keys())
 
     num_episodes = NUM_EPISODES
     episode_returns = []
 
-    # 创建结果目录
+    # Create results directory
     results_dir = "model/results"
     os.makedirs(results_dir, exist_ok=True)
 
-    # 创建唯一的文件名（包含时间戳）
+    # Create unique filename (include timestamp)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     norm_suffix = "_norm" if USE_STATE_NORMALIZATION else "_no_norm"
     csv_filename = os.path.join(results_dir, f"returns_ppo2_{timestamp}{norm_suffix}.csv")
 
-    # 打开CSV文件用于写入
+    # Open CSV file for writing
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
-        # 写入标题行 - 扩展评估指标
+        # Write header row - extended evaluation metrics
         writer.writerow([
             "Episode", "Return", "Actor_Loss", "Critic_Loss", "Constraint_Loss", "Total_Loss",
             "ESS_Violation_Rate", "EV_Violation_Rate", "Total_Violation_Rate",
@@ -723,7 +723,7 @@ if __name__ == "__main__":
             episode_return = 0
             episode_states = []
             
-            # episode级别的指标收集
+            # Episode-level metric collection
             episode_ess_violations = 0
             episode_ev_violations = 0
             episode_ess_socs = []
@@ -734,55 +734,55 @@ if __name__ == "__main__":
             episode_peak_valley_arbitrages = []
             step_count = 0
             
-            # 违反类型统计
+            # Violation type statistics
             episode_ess_mild_violations = 0
             episode_ess_severe_violations = 0
             episode_ev_mild_violations = 0
             episode_ev_severe_violations = 0
             
-            # 保留原有的次数统计用于对比
+            # Keep original count statistics for comparison
             episode_ess_violations_count = 0
             episode_ev_violations_count = 0
 
-            # 安全边界分析
+            # Safety margin analysis
             episode_ess_safety_margins = []
             episode_ev_safety_margins = []
 
-            # 新增：温度舒适度统计
+            # New: temperature comfort statistics
             ac1_temp_comforts = []
             ac2_temp_comforts = []
             ewh_temp_comforts = []
 
             while True:
-                # 收集当前状态（原始值）
+                # Collect current state (original values)
                 current_state_values = [state[k] for k in state_keys]
                 episode_states.append(current_state_values)
 
-                # 归一化当前状态
+                # Normalize current state
                 state_tensor = torch.FloatTensor(current_state_values).unsqueeze(0).to(device)
                 if USE_STATE_NORMALIZATION and running_stats is not None:
                     normalized_state = running_stats.normalize(state_tensor).clamp(-5, 5)
                 else:
                     normalized_state = state_tensor
 
-                # 从环境获取动作掩码
+                # Get action mask from environment
                 action_mask = env.get_action_mask(state)
 
-                # 智能体使用掩码选择动作
+                # Agent uses mask to select action
                 actions, log_prob, _, value = agent.take_action(
                     state,
                     action_mask=action_mask,
                     normalized_state=normalized_state
                 )
 
-                # 环境执行动作
+                # Environment executes action
                 next_state, reward, done = env.step(state, actions)
 
-                # 收集下一个状态（原始值）
+                # Collect next state (original values)
                 next_state_values = [next_state[k] for k in state_keys]
                 episode_states.append(next_state_values)
 
-                # 计算下一个状态的价值（使用归一化状态）
+                # Calculate value of next state (using normalized state)
                 next_state_tensor = torch.FloatTensor(next_state_values).unsqueeze(0).to(device)
                 if USE_STATE_NORMALIZATION and running_stats is not None:
                     normalized_next_state = running_stats.normalize(next_state_tensor).clamp(-5, 5)
@@ -790,15 +790,15 @@ if __name__ == "__main__":
                     normalized_next_state = next_state_tensor
                 next_value = agent.critic(normalized_next_state).item()
 
-                # 收集详细指标
-                # 1. 约束违反检查
+                # Collect detailed metrics
+                # 1. Constraint violation check
                 ess_soc = state['ess_state'] / env.ess_capacity
                 ev_soc = state['ev_battery_state'] / env.ev_capacity
                 episode_ess_socs.append(ess_soc)
                 episode_ev_socs.append(ev_soc)
                 
                 def calculate_violation_metrics(soc, lower_bound=0.1, upper_bound=0.9):
-                    """计算约束违反指标"""
+                    """Calculate constraint violation metrics"""
                     if lower_bound <= soc <= upper_bound:
                         return {
                             'violation_count': 0,
@@ -819,30 +819,30 @@ if __name__ == "__main__":
                         'safety_margin': safety_margin
                     }
                 
-                # 计算违反指标
+                # Calculate violation metrics
                 ess_metrics = calculate_violation_metrics(ess_soc)
                 ev_metrics = calculate_violation_metrics(ev_soc)
                 
-                # 累加指标
+                # Accumulate metrics
                 episode_ess_violations += ess_metrics['violation_severity']
                 episode_ev_violations += ev_metrics['violation_severity']
                 episode_ess_violations_count += ess_metrics['violation_count']
                 episode_ev_violations_count += ev_metrics['violation_count']
                 
-                # 安全边界分析
+                # Safety margin analysis
                 episode_ess_safety_margins.append(ess_metrics['safety_margin'])
                 episode_ev_safety_margins.append(ev_metrics['safety_margin'])
                 
-                # 2. 经济指标
+                # 2. Economic metrics
                 episode_energy_costs.append(env.current_step_cost)
                 
-                # 3. 峰谷电价套利效果
+                # 3. Peak-valley electricity price arbitrage effect
                 price = state['electricity_price']
                 ev_power = actions.get('ev_power', 0)
                 battery_power = actions.get('battery_power', 0)
                 
                 def calculate_peak_valley_arbitrage(electricity_price, ev_pwr, bat_pwr):
-                    """计算峰谷电价套利效果"""
+                    """Calculate peak-valley electricity price arbitrage effect"""
                     valley_threshold = 0.2
                     peak_threshold = 0.8
                     
@@ -868,7 +868,7 @@ if __name__ == "__main__":
                 peak_valley_arbitrage = calculate_peak_valley_arbitrage(price, ev_power, battery_power)
                 episode_peak_valley_arbitrages.append(peak_valley_arbitrage)
                 
-                # 4. 用户满意度
+                # 4. User satisfaction
                 indoor_temp1 = env.indoor_temp
                 indoor_temp2 = env.indoor_temp2
                 user_pref1 = env.user_temp_preference
@@ -879,10 +879,10 @@ if __name__ == "__main__":
                 
                 temp_comfort1 = max(0, 1 - max(0, temp_diff1 - 2) / 8)
                 temp_comfort2 = max(0, 1 - max(0, temp_diff2 - 2) / 8)
-                # 新增：每步都记录ac1/ac2/ewh舒适度
+                # New: record ac1/ac2/ewh comfort at each step
                 ac1_temp_comforts.append(temp_comfort1)
                 ac2_temp_comforts.append(temp_comfort2)
-                # 计算热水器舒适度
+                # Calculate water heater comfort
                 ewh_temp = env.state['ewh_temp']
                 hour = int(env.state['time_index'] // 2)
                 if 6 <= hour <= 9 or 18 <= hour <= 22:
@@ -902,7 +902,7 @@ if __name__ == "__main__":
                 user_satisfaction = temp_comfort * 0.7 + 0.3
                 episode_user_satisfactions.append(user_satisfaction)
 
-                # 存储transition
+                # Store transition
                 batch.append({
                     'state': state,
                     'actions': actions,
@@ -921,12 +921,12 @@ if __name__ == "__main__":
                 if done:
                     break
 
-            # 更新running_stats
+            # Update running_stats
             if USE_STATE_NORMALIZATION and running_stats is not None and episode_states:
                 states_tensor = torch.tensor(episode_states, dtype=torch.float32, device=device)
                 running_stats.update(states_tensor)
 
-            # 准备数据用于更新
+            # Prepare data for update
             batch_data = {
                 'states': [t['state'] for t in batch],
                 'actions': {
@@ -942,26 +942,26 @@ if __name__ == "__main__":
                 'next_values': [t['next_values'] for t in batch]
             }
 
-            # 状态张量转换
+            # State tensor conversion
             states = torch.stack([
                 torch.FloatTensor([s[key] for key in state_keys])
                 for s in batch_data['states']
             ]).to(device)
 
-            # 动作索引转换
+            # Action index conversion
             action_indices = []
             for t in batch:
                 indices = []
                 for name in ['ev_power', 'battery_power', 'wash_machine_schedule', 
                            'Air_conditioner_set_temp', 'Air_conditioner_set_temp2', 'ewh_set_temp']:
                     if name in t['actions']:
-                        # 找到动作在动作空间中的索引
+                        # Find index of action in action space
                         action_space = env.action_space[name]
                         action_value = t['actions'][name]
                         try:
                             idx = action_space.index(action_value)
                         except ValueError:
-                            # 如果找不到精确匹配，找到最接近的值
+                            # If exact match not found, find closest value
                             idx = min(range(len(action_space)), 
                                     key=lambda i: abs(action_space[i] - action_value))
                         indices.append(idx)
@@ -969,7 +969,7 @@ if __name__ == "__main__":
                         indices.append(0)
                 action_indices.append(indices)
 
-            # 更新transition_dict格式
+            # Update transition_dict format
             transition_dict = {
                 'states': states.cpu().numpy(),
                 'actions': np.array(action_indices),
@@ -981,13 +981,13 @@ if __name__ == "__main__":
                 'dones': np.array(batch_data['dones'])
             }
 
-            # 更新参数
+            # Update parameters
             actor_loss, critic_loss, constraint_loss, total_loss = agent.update(
                 transition_dict, running_stats, state_keys, episode, num_episodes, USE_STATE_NORMALIZATION
             )
             episode_returns.append(episode_return)
 
-            # 计算episode级别的统计指标
+            # Calculate episode-level statistical metrics
             ess_violation_rate = episode_ess_violations / step_count if step_count > 0 else 0
             ev_violation_rate = episode_ev_violations / step_count if step_count > 0 else 0
             total_violation_rate = (ess_violation_rate + ev_violation_rate) / 2 if step_count > 0 else 0
@@ -996,12 +996,12 @@ if __name__ == "__main__":
             user_satisfaction = np.mean(episode_user_satisfactions) if episode_user_satisfactions else 0
             temperature_comfort = np.mean(episode_temperature_comforts) if episode_temperature_comforts else 0
             
-            # 计算两个空调和热水器的独立温度舒适度（改为全episode均值）
+            # Calculate independent temperature comfort for two air conditioners and water heater (changed to full episode mean)
             ac1_temp_comfort = np.mean(ac1_temp_comforts) if ac1_temp_comforts else 0
             ac2_temp_comfort = np.mean(ac2_temp_comforts) if ac2_temp_comforts else 0
             ewh_temp_comfort = np.mean(ewh_temp_comforts) if ewh_temp_comforts else 0
             
-            # 计算热水器温度舒适度
+            # Calculate water heater temperature comfort
             ewh_temp = env.state['ewh_temp']
             hour = int(env.state['time_index'] // 2)
             if 6 <= hour <= 9 or 18 <= hour <= 22:
@@ -1020,7 +1020,7 @@ if __name__ == "__main__":
             ev_soc_mean = np.mean(episode_ev_socs) if episode_ev_socs else 0.5
             ev_soc_std = np.std(episode_ev_socs) if episode_ev_socs else 0
             
-            # 安全边界分析
+            # Safety margin analysis
             ess_safety_margin_mean = np.mean(episode_ess_safety_margins) if episode_ess_safety_margins else 0
             ev_safety_margin_mean = np.mean(episode_ev_safety_margins) if episode_ev_safety_margins else 0
             ess_safety_margin_std = np.std(episode_ess_safety_margins) if episode_ess_safety_margins else 0
@@ -1028,17 +1028,17 @@ if __name__ == "__main__":
             
             peak_valley_arbitrage = np.mean(episode_peak_valley_arbitrages) if episode_peak_valley_arbitrages else 0
             
-            # 训练稳定性
+            # Training stability
             if len(episode_returns) >= 10:
                 recent_returns = episode_returns[-10:]
                 training_stability = 1.0 / (1.0 + np.std(recent_returns))
             else:
                 training_stability = 0.0
             
-            # 样本效率
+            # Sample efficiency
             sample_efficiency = episode_return / step_count if step_count > 0 else 0
 
-            # 写入当前episode的详细数据到CSV
+            # Write current episode detailed data to CSV
             writer.writerow([
                 episode + 1, episode_return, actor_loss, critic_loss, constraint_loss, total_loss,
                 ess_violation_rate, ev_violation_rate, total_violation_rate,
@@ -1061,7 +1061,7 @@ if __name__ == "__main__":
                   f"Critic Loss: {critic_loss:.4f}, Constraint Loss: {constraint_loss:.4f}, "
                   f"Total Loss: {total_loss:.4f}, Violation Score: {total_violation_rate:.3f}, Cost: {energy_cost:.2f}")
             
-            # 添加详细的违反类型分析
+            # Add detailed violation type analysis
             if episode % 10 == 0:
                 ess_violation_count_rate = episode_ess_violations_count / step_count if step_count > 0 else 0
                 ev_violation_count_rate = episode_ev_violations_count / step_count if step_count > 0 else 0
@@ -1080,19 +1080,19 @@ if __name__ == "__main__":
                     print(f"  Lambda ESS: {agent.lambda_ess.item():.3f}, "
                           f"Lambda EV: {agent.lambda_ev.item():.3f}")
 
-            # 在每个episode结束时记录总成本
+            # Record total cost at end of each episode
             env.episode_costs.append(env.total_cost)
 
-    # 训练结束后保存成本数据
+    # Save cost data after training completion
     env.save_episode_costs()
 
-    # 保存训练好的模型
+    # Save trained model
     model_save_dir = "model/saved_models"
     os.makedirs(model_save_dir, exist_ok=True)
     norm_suffix = "_norm" if USE_STATE_NORMALIZATION else "_no_norm"
     model_filename = os.path.join(model_save_dir, f"ppo2_model_{timestamp}{norm_suffix}.pth")
     
-    # 保存模型状态字典
+    # Save model state dictionary
     model_save_dict = {
         'actor_ev_state_dict': agent.actor_ev.state_dict(),
         'actor_ess_state_dict': agent.actor_ess.state_dict(),
@@ -1125,7 +1125,7 @@ if __name__ == "__main__":
         }
     }
     
-    # 根据配置决定是否保存running_stats
+    # Decide whether to save running_stats based on configuration
     if USE_STATE_NORMALIZATION and running_stats is not None:
         model_save_dict.update({
             'running_stats_mean': running_stats.mean,
@@ -1135,11 +1135,11 @@ if __name__ == "__main__":
     
     torch.save(model_save_dict, model_filename)
     
-    print(f"模型已保存到: {model_filename}")
+    print(f"Model saved to: {model_filename}")
 
-    # 训练结束后关闭文件
+    # Close file after training completion
     env.visualize()
     env.plot_reward_components()
     plot_returns(episode_returns)
 
-    print(f"训练完成！Returns数据已保存到: {csv_filename}")
+    print(f"Training completed! Returns data saved to: {csv_filename}")

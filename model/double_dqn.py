@@ -1,6 +1,6 @@
 """
-Double DQN多分支解决方案，适配HEMS环境
-Double DQN通过分离动作选择和动作评估来减少Q值过估计问题
+Double DQN multi-branch solution, adapted for HEMS environment
+Double DQN reduces Q-value overestimation by separating action selection and action evaluation
 """
 import os
 import sys
@@ -13,19 +13,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import deque
 
-# 添加项目根目录到Python路径（使用相对路径）
+# Add project root directory to Python path (using relative path)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 
 from environment import HomeEnergyManagementEnv
-# 添加evaluation目录到路径
+# Add evaluation directory to path
 sys.path.append(os.path.join(project_root, 'evaluation'))
 from plt import plot_returns
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ==================== 状态归一化 ====================
+# ==================== State Normalization ====================
 class RunningStats:
     def __init__(self, shape):
         self.mean = torch.zeros(shape, device=device)
@@ -47,7 +47,7 @@ class RunningStats:
     def normalize(self, x):
         return (x - self.mean) / (self.std + 1e-8)
 
-# ==================== Q网络结构（多分支） ====================
+# ==================== Q Network Structure (Multi-branch) ====================
 class SharedFeatureExtractor(nn.Module):
     def __init__(self, state_dim, hidden_dim):
         super().__init__()
@@ -55,7 +55,7 @@ class SharedFeatureExtractor(nn.Module):
             nn.Linear(state_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(0.1),  # 添加dropout防止过拟合
+            nn.Dropout(0.1),  # Add dropout to prevent overfitting
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.ReLU(),
@@ -87,7 +87,7 @@ class QBranch(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-# ==================== Double DQN智能体 ====================
+# ==================== Double DQN Agent ====================
 class DoubleDQN:
     def __init__(self, state_dim, hidden_dim, action_space_config, lr=1e-4, gamma=0.96, tau=0.01, 
                  buffer_size=100000, batch_size=512, epsilon_start=1.0, epsilon_end=0.05, epsilon_decay=0.995):
@@ -106,36 +106,36 @@ class DoubleDQN:
         self.epsilon_decay = epsilon_decay
         self.memory = deque(maxlen=buffer_size)
         
-        # 主网络（用于动作选择）
+        # Main network (for action selection)
         self.shared_backbone = SharedFeatureExtractor(state_dim, hidden_dim).to(device)
         self.q_branches = nn.ModuleDict({
             name: QBranch(hidden_dim, dim).to(device)
             for name, dim in self.action_dims.items()
         })
         
-        # 目标网络（用于动作评估）
+        # Target network (for action evaluation)
         self.target_shared_backbone = SharedFeatureExtractor(state_dim, hidden_dim).to(device)
         self.target_q_branches = nn.ModuleDict({
             name: QBranch(hidden_dim, dim).to(device)
             for name, dim in self.action_dims.items()
         })
         
-        # 初始化目标网络
+        # Initialize target network
         self.update_target_network(1.0)
         
-        # 优化器
+        # Optimizer
         self.optimizer = torch.optim.Adam(
             list(self.shared_backbone.parameters()) + list(self.q_branches.parameters()), 
-            lr=lr, weight_decay=1e-5  # 添加L2正则化
+            lr=lr, weight_decay=1e-5  # Add L2 regularization
         )
         
-        # 学习率调度器
+        # Learning rate scheduler
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.9)
     
     def select_action(self, state_tensor, action_mask=None, explore=True):
         actions = {}
         if explore and random.random() < self.epsilon:
-            # 随机探索
+            # Random exploration
             for name, mapping in self.action_mapping.items():
                 valid_indices = list(mapping.keys())
                 if action_mask and name in action_mask:
@@ -176,13 +176,13 @@ class DoubleDQN:
         
         total_loss = 0.0
         
-        # 获取当前Q值
+        # Get current Q values
         current_features = self.shared_backbone(states)
         next_features = self.shared_backbone(next_states)
         target_next_features = self.target_shared_backbone(next_states)
         
         for name, branch in self.q_branches.items():
-            # 获取动作索引
+            # Get action index
             action_indices = []
             action_values = list(self.action_mapping[name].values())
             for val in [a[name] for a in actions]:
@@ -195,31 +195,31 @@ class DoubleDQN:
             
             action_indices = torch.tensor(action_indices, dtype=torch.long, device=device)
             
-            # 当前Q值
+            # Current Q value
             current_q = branch(current_features).gather(1, action_indices.unsqueeze(1)).squeeze()
             
-            # Double DQN: 使用主网络选择动作，目标网络评估动作
+            # Double DQN: use main network to select action, target network to evaluate action
             with torch.no_grad():
-                # 使用主网络选择下一个动作
+                # Use main network to select next action
                 next_q_values = branch(next_features)
                 next_actions = next_q_values.argmax(1)
                 
-                # 使用目标网络评估选定的动作
+                # Use target network to evaluate selected action
                 target_q_values = self.target_q_branches[name](target_next_features)
                 target_q = target_q_values.gather(1, next_actions.unsqueeze(1)).squeeze()
                 
-                # 计算目标Q值
+                # Calculate target Q value
                 target_q = rewards + self.gamma * target_q * (1 - dones)
             
-            # 计算损失
-            loss = F.huber_loss(current_q, target_q)  # 使用Huber损失提高稳定性
+            # Calculate loss
+            loss = F.huber_loss(current_q, target_q)  # Use Huber loss for improved stability
             total_loss += loss
         
-        # 反向传播
+        # Backward propagation
         self.optimizer.zero_grad()
         total_loss.backward()
         
-        # 梯度裁剪
+        # Gradient clipping
         torch.nn.utils.clip_grad_norm_(self.shared_backbone.parameters(), max_norm=1.0)
         torch.nn.utils.clip_grad_norm_(self.q_branches.parameters(), max_norm=1.0)
         
@@ -229,7 +229,7 @@ class DoubleDQN:
         return total_loss.item()
     
     def update_target_network(self, tau):
-        # 软更新目标网络
+        # Soft update target network
         for target_param, param in zip(self.target_shared_backbone.parameters(), self.shared_backbone.parameters()):
             target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
         
@@ -264,7 +264,7 @@ class DoubleDQN:
         self.scheduler.load_state_dict(checkpoint['scheduler'])
         self.epsilon = checkpoint.get('epsilon', 0.05)
 
-# ==================== 训练主循环 ====================
+# ==================== Training Main Loop ====================
 if __name__ == "__main__":
     env = HomeEnergyManagementEnv()
     env.seed(0)
@@ -274,32 +274,32 @@ if __name__ == "__main__":
     
     USE_STATE_NORMALIZATION = True
     state_dim = len(env.state_space)
-    hidden_dim = 256  # 增加隐藏层维度
+    hidden_dim = 256  # Increase hidden layer dimension
     action_space_config = env.action_space
     
     agent = DoubleDQN(
         state_dim=state_dim,
         hidden_dim=hidden_dim,
         action_space_config=action_space_config,
-        lr=1e-4,  # 调整学习率
+        lr=1e-4,  # Adjust learning rate
         gamma=0.96,
-        tau=0.005,  # 降低目标网络更新频率
-        buffer_size=100000,  # 增加经验回放池大小
-        batch_size=256,  # 增加批量大小
+        tau=0.005,  # Reduce target network update frequency
+        buffer_size=100000,  # Increase experience replay buffer size
+        batch_size=256,  # Increase batch size
         epsilon_start=1.0,
-        epsilon_end=0.01,  # 降低最终探索率
-        epsilon_decay=0.9995  # 调整探索衰减
+        epsilon_end=0.01,  # Reduce final exploration rate
+        epsilon_decay=0.9995  # Adjust exploration decay
     )
     
     if USE_STATE_NORMALIZATION:
         running_stats = RunningStats(shape=state_dim)
-        print("状态归一化已启用")
+        print("State normalization enabled")
     else:
         running_stats = None
-        print("状态归一化已禁用")
+        print("State normalization disabled")
     
     state_keys = sorted(env.state_space.keys())
-    num_episodes = 5000  # 增加训练轮数
+    num_episodes = 5000  # Increase number of training episodes
     max_steps = 200
     episode_returns = []
     
@@ -368,7 +368,7 @@ if __name__ == "__main__":
                 state = next_state
                 step_count += 1
                 
-                # 约束统计
+                # Constraint statistics
                 ess_soc = state['ess_state'] / env.ess_capacity
                 ev_soc = state['ev_battery_state'] / env.ev_capacity
                 episode_ess_socs.append(ess_soc)
@@ -381,7 +381,7 @@ if __name__ == "__main__":
                 episode_ess_violations += ess_violation
                 episode_ev_violations += ev_violation
                 
-                # 经济与舒适度
+                # Economics and comfort
                 episode_energy_costs.append(env.current_step_cost)
                 
                 indoor_temp1 = env.indoor_temp
@@ -418,22 +418,22 @@ if __name__ == "__main__":
                 if done:
                     break
             
-            # 更新running_stats
+            # Update running_stats
             if USE_STATE_NORMALIZATION and running_stats is not None and episode_states:
                 states_tensor = torch.tensor(episode_states, dtype=torch.float32, device=device)
                 running_stats.update(states_tensor)
             
-            # Double DQN参数更新
+            # Double DQN parameter update
             loss = agent.update()
             agent.decay_epsilon()
             
-            # 定期更新目标网络
+            # Periodically update target network
             if episode % 10 == 0:
                 agent.update_target_network(agent.tau)
             
             episode_returns.append(episode_return)
             
-            # 计算统计指标
+            # Calculate statistical metrics
             ess_violation_rate = episode_ess_violations / step_count if step_count > 0 else 0
             ev_violation_rate = episode_ev_violations / step_count if step_count > 0 else 0
             total_violation_rate = (ess_violation_rate + ev_violation_rate) / 2 if step_count > 0 else 0
@@ -457,7 +457,7 @@ if __name__ == "__main__":
                   f"Violation: {total_violation_rate:.3f}, Cost: {energy_cost:.2f}, "
                   f"Epsilon: {agent.epsilon:.3f}, LR: {current_lr:.6f}")
         
-        # 保存模型
+        # Save model
         model_save_dir = "model/saved_models"
         os.makedirs(model_save_dir, exist_ok=True)
         model_filename = os.path.join(model_save_dir, f"double_dqn_model_{timestamp}{norm_suffix}.pth")
@@ -485,17 +485,17 @@ if __name__ == "__main__":
             }
         }
         
-        # 如果使用了状态归一化，保存running_stats
+        # If state normalization is used, save running_stats
         if USE_STATE_NORMALIZATION and running_stats is not None:
             model_save_dict['running_stats_mean'] = running_stats.mean
             model_save_dict['running_stats_std'] = running_stats.std
             model_save_dict['running_stats_count'] = running_stats.count
         
         torch.save(model_save_dict, model_filename)
-        print(f"Double DQN模型已保存到: {model_filename}")
+        print(f"Double DQN model saved to: {model_filename}")
     
     env.save_episode_costs()
     env.visualize()
     env.plot_reward_components()
     plot_returns(episode_returns)
-    print(f"Double DQN训练完成！Returns数据已保存到: {csv_filename}") 
+    print(f"Double DQN training completed! Returns data saved to: {csv_filename}") 

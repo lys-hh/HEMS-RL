@@ -1,31 +1,31 @@
 
 """
-环境可视化图片汇总
+Environment visualization plot summary
 """
 import os
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
 def show_all_plots():
-    """显示所有保存的图片"""
+    """Display all saved plots"""
     plot_dir = 'save'
     
     if not os.path.exists(plot_dir):
-        print("save 文件夹不存在！")
+        print("save folder does not exist!")
         return
     
-    # 获取所有图片文件
+    # Get all image files
     image_files = [f for f in os.listdir(plot_dir) if f.endswith('.png')]
     
     if not image_files:
-        print("没有找到图片文件！")
+        print("No image files found!")
         return
     
-    print(f"找到 {len(image_files)} 张图片:")
+    print(f"Found {len(image_files)} images:")
     for i, filename in enumerate(sorted(image_files), 1):
         print(f"{i}. {filename}")
     
-    # 创建图片展示
+    # Create image display
     n_images = len(image_files)
     cols = 3
     rows = (n_images + cols - 1) // cols
@@ -45,7 +45,7 @@ def show_all_plots():
         axes[row, col].set_title(filename, fontsize=10)
         axes[row, col].axis('off')
     
-    # 隐藏多余的子图
+    # Hide extra subplots
     for i in range(n_images, rows * cols):
         row = i // cols
         col = i % cols

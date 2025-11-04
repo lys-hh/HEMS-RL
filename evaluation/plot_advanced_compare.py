@@ -1,5 +1,5 @@
 '''
-该文件绘制热力图、散点图、雷达图
+This file plots heatmaps, scatter plots, and radar charts
 '''
 
 import pandas as pd
@@ -9,7 +9,7 @@ import seaborn as sns
 import os
 from mpl_toolkits.mplot3d import Axes3D
 
-# 文件路径与实验标签
+# File paths and experiment labels
 files = {
     "No Dynamic Mask": "model/results/returns_ppo_20250709_121258_norm_unconstrained.csv",
     "Proposed RL": "model/results/returns_ppo_20250709_144004_norm_unconstrained.csv",
@@ -18,14 +18,14 @@ files = {
     "no shared layer": "model/results/returns_ppo2_20250710_202931_norm.csv"
 }
 
-# 读取数据
+# Read data
 data = {}
 for label, file in files.items():
     data[label] = pd.read_csv(file)
 
 os.makedirs('save_pictures', exist_ok=True)
 
-# 雷达图（美化版）
+# Radar chart (enhanced version)
 radar_metrics = [
     ('Return', 'Return'),
     ('Energy_Cost', 'Energy Cost'),
@@ -55,10 +55,10 @@ for label, values in norm_data.items():
     stats = list(values) + [values[0]]
     ax.plot(angles, stats, label=label, linewidth=3)
 ax.set_xticks(angles[:-1])
-ax.set_xticklabels(['']*num_vars)  # 不用默认标签
+ax.set_xticklabels(['']*num_vars)  # Don't use default labels
 for i, label_txt in enumerate(labels_radar):
     radius = 1.18
-    if i in [0, 2, 4]:  # 最左、右侧、最右侧
+    if i in [0, 2, 4]:  # Leftmost, right, rightmost
         ax.text(angles[i], radius, label_txt, ha='center', va='center', rotation=90, fontsize=14, fontweight='bold', transform=ax.transData)
     else:
         ax.text(angles[i], radius, label_txt, ha='center', va='center', fontsize=14, fontweight='bold', transform=ax.transData)
@@ -71,7 +71,7 @@ plt.tight_layout()
 plt.savefig('figures/algorithm_comparison/performance_radar.png', dpi=300)
 plt.show()
 
-# 三维散点图
+# 3D scatter plot
 fig3d = plt.figure(figsize=(10, 8))
 ax3d = fig3d.add_subplot(111, projection='3d')
 for label, df in data.items():
@@ -92,7 +92,7 @@ plt.tight_layout()
 plt.savefig('figures/algorithm_comparison/3d_violation_energycost_comfort.png', dpi=600)
 plt.show()
 
-# 热力图：Proposed RL实验主要数值型指标相关性
+# Heatmap: Correlation of main numerical indicators for Proposed RL experiment
 proposed_df = data.get('Proposed RL')
 if proposed_df is not None:
     corr_cols = ['Return', 'Energy_Cost', 'Total_Violation_Rate', 'User_Satisfaction', 'Temperature_Comfort', 'Sample_Efficiency', 'Training_Stability']
@@ -103,4 +103,4 @@ if proposed_df is not None:
     plt.title('Correlation Heatmap (Proposed RL)')
     plt.tight_layout()
     plt.savefig('figures/algorithm_comparison/proposed_rl_corr_heatmap.png', dpi=300)
-    plt.show() 
+    plt.show()

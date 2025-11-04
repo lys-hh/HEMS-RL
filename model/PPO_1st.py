@@ -1,5 +1,6 @@
 """
-拉格朗日约束、自适应熵、共享网络层与独立动作头、梯度裁剪、学习率调度、优势函数归一化、层归一化、正交初始化
+Lagrangian constraints, adaptive entropy, shared network layers with independent action heads,
+gradient clipping, learning rate scheduling, advantage function normalization, layer normalization, orthogonal initialization
 """
 
 import numpy as np
@@ -10,7 +11,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.nn.utils.clip_grad import clip_grad_norm_
 
 from environment import HomeEnergyManagementEnv
-# 添加evaluation目录到路径（使用相对路径）
+# Add evaluation directory to path (using relative path)
 import sys
 import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -31,7 +32,7 @@ class SharedFeatureExtractor(nn.Module):
             nn.LayerNorm(hidden_dim),
             nn.ReLU()
         )
-        # 正交初始化
+        # Orthogonal initialization
         for layer in self.net.modules():
             if isinstance(layer, nn.Linear):
                 nn.init.orthogonal_(layer.weight)
@@ -50,7 +51,7 @@ class ActionBranch(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, action_dim)
         )
-        # 正交初始化
+        # Orthogonal initialization
         for layer in self.net.modules():
             if isinstance(layer, nn.Linear):
                 nn.init.orthogonal_(layer.weight)
@@ -72,35 +73,35 @@ class ValueNet(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, 1)
         )
-        # 正交初始化
+        # Orthogonal initialization
         for layer in self.net.modules():
             if isinstance(layer, nn.Linear):
                 nn.init.orthogonal_(layer.weight)
                 layer.bias.data.zero_()
 
     def forward(self, x):
-        return self.net(x).squeeze(-1)  # 关键修改：压缩最后一个维度
+        return self.net(x).squeeze(-1)  # Key modification: squeeze last dimension
 
 
-# ==================== PPO智能体 ====================
+# ==================== PPO Agent ====================
 class HomeEnergyPPO:
     def __init__(self, env, state_dim, hidden_dim, action_space_config,
                  gamma=0.96, lmbda=0.98, eps=0.2, epochs=4,
                  ent_coef=0.1, max_grad_norm=5, device=device, constraint_config=None, constraint_mode="none"):
 
-        # 创建动作映射表
+        # Create action mapping table
         self.action_mapping = {
             name: {idx: val for idx, val in enumerate(values)}
             for name, values in action_space_config.items()
         }
 
-        # 每个设备的离散动作数量
+        # Number of discrete actions for each device
         self.action_dims = {
             name: len(values)
             for name, values in action_space_config.items()
         }
 
-        # 网络初始化
+        # Network initialization
         self.shared_backbone = SharedFeatureExtractor(state_dim, hidden_dim).to(device)
         self.actor_branches = nn.ModuleDict({
             name: ActionBranch(hidden_dim, dim).to(device)
@@ -108,14 +109,14 @@ class HomeEnergyPPO:
         })
         self.critic = ValueNet(state_dim, hidden_dim).to(device)
 
-        # 优化器
+        # Optimizer
         self.actor_optim = torch.optim.AdamW([
             {'params': self.shared_backbone.parameters()},
             {'params': self.actor_branches.parameters()}
         ], lr=2.5e-4)
         self.critic_optim = torch.optim.AdamW(self.critic.parameters(), lr=2.5e-4)
 
-        # 学习率调度
+        # Learning rate scheduling
         self.actor_scheduler = CosineAnnealingLR(self.actor_optim, T_max=5000)
         self.critic_scheduler = CosineAnnealingLR(self.critic_optim, T_max=5000)
 
@@ -126,14 +127,14 @@ class HomeEnergyPPO:
             }
         self.constraint_config = constraint_config.copy()
 
-        # # 熵相关参数
+        # # Entropy related parameters
         self.target_entropy = np.mean([
-            0.5 * np.log(len(actions)) for actions in action_space_config.values()])  # 每个动作分支的熵
+            0.5 * np.log(len(actions)) for actions in action_space_config.values()])  # Entropy for each action branch
 
         self.log_alpha = torch.tensor(0.0, requires_grad=True, device=device)
         self.alpha_optim = torch.optim.Adam([self.log_alpha], lr=1e-5)
 
-        # 算法参数
+        # Algorithm parameters
         self.gamma = gamma
         self.lmbda = lmbda
         self.eps = eps
@@ -158,29 +159,29 @@ class HomeEnergyPPO:
         for name, branch in self.actor_branches.items():
             logits = branch(shared_features)
 
-            # 应用动作掩码（如果提供）
+            # Apply action mask (if provided)
             if action_mask and name in action_mask:
-                # 转换为张量并确保正确形状
+                # Convert to tensor and ensure correct shape
                 mask_tensor = torch.tensor(action_mask[name],
                                            dtype=torch.bool,
                                            device=logits.device)
                 if mask_tensor.dim() == 1:
-                    mask_tensor = mask_tensor.unsqueeze(0)  # 添加批次维度
+                    mask_tensor = mask_tensor.unsqueeze(0)  # Add batch dimension
 
-                # 应用掩码
+                # Apply mask
                 masked_logits = torch.where(mask_tensor, logits,
                                             torch.tensor(-1e9, dtype=logits.dtype, device=logits.device))
             else:
                 masked_logits = logits
 
-            # 创建概率分布
+            # Create probability distribution
             dist = torch.distributions.Categorical(logits=masked_logits)
             action_idx = dist.sample()
 
-            # 将索引转换为实际值
+            # Convert indices to actual values
             actions[name] = self.action_mapping[name][action_idx.item()]
 
-            # 收集日志概率和熵
+            # Collect log probabilities and entropy
             log_probs.append(dist.log_prob(action_idx))
             entropies.append(dist.entropy())
 
@@ -209,7 +210,7 @@ class HomeEnergyPPO:
         return advantages
 
     def update(self, batch_data_list):
-        # ==================== 数据准备 ====================
+        # ==================== Data Preparation ====================
         batch_data = {
             'states': [t['state'] for t in batch_data_list],
             'actions': {
@@ -224,14 +225,14 @@ class HomeEnergyPPO:
             'next_values': [t['next_values'] for t in batch_data_list]
         }
 
-        # 状态张量转换（确保顺序一致）
+        # State tensor conversion (ensure consistent order)
         state_keys = sorted(batch_data['states'][0].keys())
         states = torch.stack([
             torch.FloatTensor([s[key] for key in state_keys])
             for s in batch_data['states']
         ]).to(device)
 
-        # 动作索引转换（处理浮点精度）
+        # Action index conversion (handle floating point precision)
         action_indices = {}
         for name in self.action_mapping:
             indices = [
@@ -240,28 +241,28 @@ class HomeEnergyPPO:
             ]
             action_indices[name] = torch.tensor(indices, dtype=torch.long, device=device)
 
-        # 张量转换（显式指定device）
+        # Tensor conversion (explicitly specify device)
         rewards = torch.tensor(batch_data['rewards'], dtype=torch.float32, device=device)
         dones = torch.tensor(batch_data['dones'], dtype=torch.float32, device=device)
         old_log_probs = torch.stack([lp.squeeze() for lp in batch_data['log_probs']]).to(device)
         values = torch.tensor(batch_data['values'], dtype=torch.float32, device=device)
         next_values = torch.tensor(batch_data['next_values'], dtype=torch.float32, device=device)
 
-        # ==================== GAE计算 ====================
+        # ==================== GAE Calculation ====================
         advantages = self.compute_gae(rewards, values, next_values, dones)
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         for _ in range(self.epochs):
-            # ==================== Critic更新 ====================
+            # ==================== Critic Update ====================
             critic_values = self.critic(states)
             critic_loss = F.mse_loss(critic_values, rewards + self.gamma * next_values * (1 - dones))
 
-            # ==================== Actor更新 ====================
+            # ==================== Actor Update ====================
             shared_features = self.shared_backbone(states)
             new_log_probs = []
             entropies = []
 
-            # 各动作分支的概率计算
+            # Probability calculation for each action branch
             for name, branch in self.actor_branches.items():
                 logits = branch(shared_features)
                 dist = torch.distributions.Categorical(logits=logits)
@@ -271,27 +272,27 @@ class HomeEnergyPPO:
             total_entropy = torch.stack(entropies).mean(dim=0).mean()
             new_log_probs = torch.stack(new_log_probs).sum(dim=0).squeeze()
 
-            # 维度一致性检查
+            # Dimension consistency check
             assert new_log_probs.shape == old_log_probs.shape, \
-                f"维度不匹配: new_log_probs {new_log_probs.shape} vs old_log_probs {old_log_probs.shape}"
+                f"Dimension mismatch: new_log_probs {new_log_probs.shape} vs old_log_probs {old_log_probs.shape}"
 
-            # PPO核心损失计算
+            # PPO core loss calculation
             ratios = torch.exp(new_log_probs - old_log_probs.detach())
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * advantages
             actor_loss = -torch.min(surr1, surr2).mean()
 
-            # ==================== 自动熵调整 ====================
+            # ==================== Automatic Entropy Adjustment ====================
             alpha_loss = -(self.log_alpha * (total_entropy - self.target_entropy)).mean()
             self.alpha_optim.zero_grad()
-            alpha_loss.backward(retain_graph=True)  # 保留计算图用于后续梯度
+            alpha_loss.backward(retain_graph=True)  # Retain computation graph for subsequent gradients
             self.alpha_optim.step()
             alpha = self.log_alpha.exp().detach().clamp(max=1.0)
 
-            # ==================== 约束处理（条件执行）====================
+            # ==================== Constraint Handling (Conditional Execution) ====================
             constraint_loss = torch.tensor(0.0, device=device)
             if self.constraint_mode == "lagrangian":
-                # 约束违反计算
+                # Constraint violation calculation
                 ess_states = states[:, 2]
                 ev_states = states[:, 3]
                 soc_lower = self.constraint_config['soc_lower']
@@ -306,33 +307,33 @@ class HomeEnergyPPO:
                         torch.relu(ev_states - soc_upper * self.ev_capacity)
                 )
 
-                # 约束损失计算
+                # Constraint loss calculation
                 constraint_loss = (
                         self.lambda_ess * ess_violation.mean() +
                         self.lambda_ev * ev_violation.mean()
                 )
 
-            # ==================== 总损失计算 ====================
+            # ==================== Total Loss Calculation ====================
             total_loss = (
                     actor_loss
                     + 0.5 * critic_loss
                     # - 0.5 * alpha * total_entropy
-                    # + constraint_loss  # 根据use_constraint自动为0或实际值
+                    # + constraint_loss  # Automatically 0 or actual value based on use_constraint
             )
 
-            # ==================== 统一梯度更新 ====================
-            # 梯度清零
+            # ==================== Unified Gradient Update ====================
+            # Zero gradients
             self.actor_optim.zero_grad()
             self.critic_optim.zero_grad()
 
-            # 反向传播（单次）
+            # Backward propagation (single pass)
             total_loss.backward()
 
-            # 梯度裁剪
+            # Gradient clipping
             nn.utils.clip_grad_norm_(self.shared_backbone.parameters(), self.max_grad_norm)
             nn.utils.clip_grad_norm_(self.actor_branches.parameters(), self.max_grad_norm)
 
-            # 参数更新
+            # Parameter update
             self.actor_optim.step()
             self.critic_optim.step()
 
@@ -342,9 +343,9 @@ class HomeEnergyPPO:
             return total_loss.item()
 
 
-# ==================== 训练循环 ====================
+# ==================== Training Loop ====================
 if __name__ == "__main__":
-    # 环境初始化（使用您提供的环境类）
+    # Environment initialization (using provided environment class)
     env = HomeEnergyManagementEnv()
     env.seed(0)
     torch.manual_seed(0)
@@ -368,10 +369,10 @@ if __name__ == "__main__":
         state_tensor = torch.FloatTensor(list(state.values())).unsqueeze(0).to(device)
 
         while True:
-            # 智能体生成动作（实际值）
+            # Agent generates action (actual value)
             actions, log_prob, _, value = agent.take_action(state_tensor)
 
-            # 动作约束
+            # Action constraints
             if not env.is_ev_at_home():
                 actions['ev_power'] = 0.0
 
@@ -385,17 +386,17 @@ if __name__ == "__main__":
             elif state['ev_battery_state'] < 0.5:
                 actions['ev_power'] = max(actions['ev_power'], 0)
 
-            # 环境执行动作
+            # Environment executes action
             next_state, reward, done = env.step(state, actions)
 
-            # 计算下一个状态的价值
+            # Calculate value of next state
             next_state_tensor = torch.FloatTensor(list(next_state.values())).unsqueeze(0).to(device)
             next_value = agent.critic(next_state_tensor).item()
 
-            # 存储transition
+            # Store transition
             batch.append({
                 'state': state,
-                'actions': actions,  # 存储实际动作值
+                'actions': actions,  # Store actual action values
                 'rewards': reward,
                 'next_state': next_state,
                 'dones': done,
@@ -410,7 +411,7 @@ if __name__ == "__main__":
             if done:
                 break
 
-        # 更新参数
+        # Update parameters
         loss = agent.update(batch)
         episode_returns.append(episode_return)
         print(f"Episode {episode + 1}, Return: {episode_return:.2f}, Loss: {loss:.4f}")

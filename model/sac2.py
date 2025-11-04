@@ -1,6 +1,6 @@
 """
-没有使用重要性采样的sac
-增加了关于动作选择的物理约束
+SAC without importance sampling
+Added physical constraints on action selection
 """
 
 import torch
@@ -14,7 +14,7 @@ import os
 import sys
 from collections import deque
 
-# 添加项目根目录到Python路径（使用相对路径）
+# Add project root directory to Python path (using relative path)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
@@ -23,9 +23,9 @@ from environment import HomeEnergyManagementEnv
 import matplotlib.pyplot as plt
 
 def state_to_vector(state):
-    """兼容处理字典和向量两种输入格式"""
+    """Compatible processing for both dictionary and vector input formats"""
     if isinstance(state, dict):
-        # 原始字典处理逻辑
+        # Original dictionary processing logic
         return np.array([
             state['home_load'],  # 0-10kW
             state['pv_generation'],
@@ -41,12 +41,12 @@ def state_to_vector(state):
             state['ewh_power']
         ], dtype=np.float32)
     else:
-        # 直接返回已向量化的状态（假设输入已经是处理好的向量）
+        # Directly return vectorized state (assuming input is already processed vector)
         return np.asarray(state, dtype=np.float32)
 
 
 class ActionConverter:
-    """将连续动作转换为环境需要的混合动作"""
+    """Convert continuous actions to mixed actions required by environment"""
 
     def __init__(self):
         self.action_map = {
@@ -172,7 +172,7 @@ class EnhancedSAC:
         rewards = torch.FloatTensor(rewards).unsqueeze(1).to(self.device)
         dones = torch.FloatTensor(dones).unsqueeze(1).to(self.device)
 
-        # 更新Critic
+        # Update Critic
         with torch.no_grad():
             next_actions, next_log_probs = self.actor.sample(next_states)
             target_q1, target_q2 = self.target_critic(next_states, next_actions)
@@ -186,7 +186,7 @@ class EnhancedSAC:
         critic_loss.backward()
         self.critic_optim.step()
 
-        # 更新Actor
+        # Update Actor
         new_actions, log_probs = self.actor.sample(states)
         q1_new, q2_new = self.critic(states, new_actions)
         actor_loss = (self.log_alpha.exp().detach() * log_probs - torch.min(q1_new, q2_new)).mean()
@@ -195,19 +195,19 @@ class EnhancedSAC:
         actor_loss.backward()
         self.actor_optim.step()
 
-        # 更新温度参数
+        # Update temperature parameter
         # alpha_loss = -(self.log_alpha * (log_probs.detach() + self.target_entropy)).mean()
         # self.alpha_optim.zero_grad()
         # alpha_loss.backward()
         # self.alpha_optim.step()
-        # 在alpha loss计算中加入clip防止突变
+        # Add clip to alpha loss calculation to prevent sudden changes
         alpha_loss = -(self.log_alpha * (log_probs.detach() + self.target_entropy)).mean()
         self.alpha_optim.zero_grad()
         alpha_loss.backward()
-        # torch.nn.utils.clip_grad_norm_([self.log_alpha], 0.5)  # 新增梯度裁剪
+        # torch.nn.utils.clip_grad_norm_([self.log_alpha], 0.5)  # New gradient clipping
         self.alpha_optim.step()
 
-        # 软更新目标网络
+        # Soft update target network
         for param, target_param in zip(self.critic.parameters(), self.target_critic.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
@@ -222,7 +222,7 @@ class ReplayBuffer:
         batch = random.sample(self.buffer, batch_size)
         states, actions, next_states, rewards, dones = zip(*batch)
         return (
-            np.array([state_to_vector(s) for s in states]),  # 统一向量化
+            np.array([state_to_vector(s) for s in states]),  # Unified vectorization
             np.array(actions),
             np.array([state_to_vector(s) for s in next_states]),
             np.array(rewards),
@@ -236,16 +236,16 @@ class ReplayBuffer:
 def plot_episode_returns(returns, window=50):
     plt.figure(figsize=(10, 5))
 
-    # 原始回报曲线（淡紫色）
+    # Original return curve (light purple)
     plt.plot(returns,
-             color='#E0B0FF',  # 淡紫色
+             color='#E0B0FF',  # Light purple
              alpha=0.3,
              label='Episode Reward')
 
-    # 滑动平均曲线（深紫色）
+    # Moving average curve (dark purple)
     smoothed = np.convolve(returns, np.ones(window) / window, mode='valid')
     plt.plot(smoothed,
-             color='#6A0DAD',  # 深紫色
+             color='#6A0DAD',  # Dark purple
              linewidth=2,
              label=f'{window}-Episode Average')
 
@@ -258,15 +258,15 @@ def plot_episode_returns(returns, window=50):
 
 def train_enhanced_sac(env, episodes=500, batch_size=1024, buffer_size=1e6, min_size = 100000):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    state_dim = 12  # 更新后的状态维度
-    action_dim = 6  # 连续动作维度
+    state_dim = 12  # Updated state dimension
+    action_dim = 6  # Continuous action dimension
 
     agent = EnhancedSAC(state_dim, action_dim, device)
     buffer = ReplayBuffer(int(buffer_size), device)
     returns = []
 
     for episode in range(episodes):
-        # 动态调整探索率
+        # Dynamically adjust exploration rate
         # exploration_factor = max(0.1, 1 - episode / 500)
         state = env.reset()
         # state = torch.FloatTensor(state_to_vector(env.reset())).to(device)
@@ -277,26 +277,26 @@ def train_enhanced_sac(env, episodes=500, batch_size=1024, buffer_size=1e6, min_
         ac2_temp_comforts = []
         ewh_temp_comforts = []
         while not done:
-            # 生成并执行动作
+            # Generate and execute action
             action = agent.select_action(state_to_vector(state))
         # while not done:
-        #     # 获取连续动作（Tensor类型）
+        #     # Get continuous action (Tensor type)
         #     state_tensor = torch.FloatTensor(state_to_vector(state)).to(device).unsqueeze(0)
         #
         #     with torch.no_grad():
-        #         # 生成连续动作（Tensor）
+        #         # Generate continuous action (Tensor)
         #         continuous_action, _ = agent.actor.sample(state_tensor)
         #
-        #         # 添加探索噪声（在连续动作上操作）
+        #         # Add exploration noise (operate on continuous actions)
         #         # if np.random.rand() < exploration_factor * 0.1:
         #         #     continuous_action += torch.randn_like(continuous_action) * 0.2
         #
-        #         # 转换为环境需要的离散动作（字典）
+        #         # Convert to discrete actions required by environment (dictionary)
         #         action = agent.converter.continuous_to_discrete(continuous_action.cpu().numpy()[0])
 
-            # 应用物理约束
+            # Apply physical constraints
             if not env.is_ev_at_home():
-                action['ev_power'] = 0.0  # EV不在家时禁止充放电
+                action['ev_power'] = 0.0  # Prohibit charge/discharge when EV is not at home
 
             if state['ess_state'] > 23.5:
                 action['battery_power'] = min(action['battery_power'], 0)
@@ -310,7 +310,7 @@ def train_enhanced_sac(env, episodes=500, batch_size=1024, buffer_size=1e6, min_
 
             next_state, reward, done = env.step(state, action)
 
-            # 存储转换过程
+            # Store conversion process
             buffer.push(
                 state_to_vector(state),
                 np.array([
@@ -326,10 +326,10 @@ def train_enhanced_sac(env, episodes=500, batch_size=1024, buffer_size=1e6, min_
                 done
             )
 
-            # # 更新网络参数
+            # # Update network parameters
             # if len(buffer) > batch_size:
             #     agent.update_parameters(buffer.sample(batch_size))
-            # 更新网络参数
+            # Update network parameters
             if len(buffer) > min_size:
                 agent.update_parameters(buffer.sample(batch_size))
 
@@ -363,12 +363,12 @@ def train_enhanced_sac(env, episodes=500, batch_size=1024, buffer_size=1e6, min_
         print(f"Episode {episode + 1}/{episodes} | Reward: {episode_reward:.1f}")
 
 
-    # 最终可视化
+    # Final visualization
     env.visualize()
     plot_episode_returns(returns)
     env.plot_reward_components()
     
-    # ========== 新增：训练结束后保存模型参数 ========== 
+    # ========== New: Save model parameters after training ========== 
     model_save_dict = {
         'actor_state_dict': agent.actor.state_dict(),
         'critic_state_dict': agent.critic.state_dict(),
@@ -383,13 +383,13 @@ def train_enhanced_sac(env, episodes=500, batch_size=1024, buffer_size=1e6, min_
             'hidden_dim': agent.actor.net[0].out_features,
             'gamma': agent.gamma,
             'tau': agent.tau,
-            # 可根据需要补充其他训练参数
+            # Can add other training parameters as needed
         }
     }
     import os
     os.makedirs('model/saved_models', exist_ok=True)
     torch.save(model_save_dict, 'model/saved_models/sac2_model.pth')
-    print('模型已保存到: model/saved_models/sac2_model.pth')
+    print('Model saved to: model/saved_models/sac2_model.pth')
     
     return returns
 

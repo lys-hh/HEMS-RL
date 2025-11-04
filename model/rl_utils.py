@@ -40,7 +40,7 @@ def moving_average(a, window_size):
 
 def train_on_policy_agent(env, agent, num_episodes):
     return_list = []
-    plot_count = 0  # 初始化绘制计数器
+    plot_count = 0  # Initialize plot counter
 
     # for i in range(10):
         # with tqdm(total=int(num_episodes/10), desc='Iteration %d' % i) as pbar:
@@ -48,16 +48,16 @@ def train_on_policy_agent(env, agent, num_episodes):
             episode_return = 0
             transition_dict = {'states': [], 'actions': [], 'next_states': [], 'rewards': [], 'dones': []}
             state = env.reset()
-                # agent.reset()    # 重置用于记录ess充放电数据来源和去向的列表
+                # agent.reset()    # Reset list for recording ESS charge/discharge data sources and destinations
             done = False
-            step_count = 0  # 用于计算步数
+            step_count = 0  # For counting steps
 
             while not done:
-                    # env.reward_shape(plot_count / num_episodes)   # 动态调整惩罚系数
+                    # env.reward_shape(plot_count / num_episodes)   # Dynamically adjust penalty coefficient
                 action = agent.take_action(state)
                 next_state, reward, done = env.step(state, action)
-                    # agent.update_ent_coef(plot_count / num_episodes)   # 动态自适应熵
-                    # agent.update_lr(plot_count)                  # 学习率周期性重启
+                    # agent.update_ent_coef(plot_count / num_episodes)   # Dynamically adaptive entropy
+                    # agent.update_lr(plot_count)                  # Learning rate periodic restart
                 transition_dict['states'].append(state)
                 transition_dict['actions'].append(action)
                 transition_dict['next_states'].append(next_state)
@@ -82,7 +82,7 @@ def train_on_policy_agent(env, agent, num_episodes):
 
 def train_off_policy_agent(env, agent, num_episodes, replay_buffer, minimal_size, batch_size):
     return_list = []
-    plot_count = 0  # 初始化绘制计数器
+    plot_count = 0  # Initialize plot counter
     # curriculum_wrapper = CurriculumWrapper(env)
 
     for i in range(num_episodes):
@@ -94,7 +94,7 @@ def train_off_policy_agent(env, agent, num_episodes, replay_buffer, minimal_size
         home_load_episode = []
         pv_generation_episode = []
         electricity_price_episode = []
-        ev_at_home_episode = []  # 保存当前 episode 的 EV 是否在家状态
+        ev_at_home_episode = []  # Save EV at home status for current episode
         while not done:
             action = agent.take_action(state)
             next_state, reward, done = env.step(state, action)
@@ -109,7 +109,7 @@ def train_off_policy_agent(env, agent, num_episodes, replay_buffer, minimal_size
             electricity_price_episode.append(env.state['electricity_price'])
             ev_at_home_episode.append(env.ev_at_home_record[-1])
 
-            # 确保回放缓冲区有足够的样本后再开始训练
+            # Ensure replay buffer has enough samples before starting training
             if len(replay_buffer) > minimal_size:
                 b_s, b_a, b_r, b_ns, b_d = replay_buffer.sample(batch_size)
                 transition_dict = {
@@ -123,8 +123,8 @@ def train_off_policy_agent(env, agent, num_episodes, replay_buffer, minimal_size
 
         return_list.append(episode_return)
 
-        # # 更新课程阶段
-        # curriculum_wrapper.episode_count += 1  # 在 CurriculumWrapper 内部自动管理 episode_count
+        # # Update curriculum stage
+        # curriculum_wrapper.episode_count += 1  # Automatically manage episode_count inside CurriculumWrapper
         # if curriculum_wrapper.episode_count % 80 == 0:
         #     curriculum_wrapper.curriculum_stage = min(4, curriculum_wrapper.curriculum_stage + 1)
         plot_count += 1
@@ -143,7 +143,7 @@ def train_off_policy_agent(env, agent, num_episodes, replay_buffer, minimal_size
 #     for delta in td_delta[::-1]:
 #         advantage = gamma * lmbda * advantage + delta
 #         advantage_list.append(advantage)
-#     advantage_list.reverse()  # reverse()用于列表的反转
+#     advantage_list.reverse()  # reverse() is used to reverse the list
 #     return torch.tensor(advantage_list, dtype=torch.float)
 
 
@@ -155,8 +155,8 @@ def compute_advantage(gamma, lmbda, td_delta):
         advantage_list.append(advantage)
     advantage_list.reverse()
 
-    # 将列表转换为NumPy数组，然后再转换为Tensor
-    # 注意：在转换之前使用.detach()来分离Tensor
+    # Convert list to NumPy array, then to Tensor
+    # Note: Use .detach() to detach Tensor before conversion
     advantage_array = np.array([a.detach().cpu().numpy() for a in advantage_list])
     advantages = torch.tensor(advantage_array, dtype=torch.float)
     return advantages

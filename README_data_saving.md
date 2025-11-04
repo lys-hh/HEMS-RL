@@ -1,23 +1,23 @@
-# PPO训练数据保存功能
+# PPO Training Data Saving Functionality
 
-## 功能概述
+## Overview
 
-在运行PPO训练时，系统会自动保存详细的模拟数据到CSV文件，方便后续分析和绘图。
+When running PPO training, the system automatically saves detailed simulation data to CSV files for subsequent analysis and plotting.
 
-## 数据保存时机
+## Data Saving Timing
 
-### 训练过程中
-- 只保存最后50个episode的详细数据
-- 文件名格式：`simulation_data_episode_XXX.csv`
+### During Training
+- Only saves detailed data from the last 50 episodes
+- File name format: `simulation_data_episode_XXX.csv`
 
-### 训练结束后
-- 保存最终完整数据
-- 文件名格式：`final_simulation_data_episode_XXX.csv`
-- 自动生成可视化图片
+### After Training
+- Saves final complete data
+- File name format: `final_simulation_data_episode_XXX.csv`
+- Automatically generates visualization plots
 
-## 数据文件位置
+## Data File Location
 
-所有CSV文件保存在 `simulation_data/` 文件夹中：
+All CSV files are saved in the `simulation_data/` folder:
 ```
 simulation_data/
 ├── simulation_data_episode_951.csv
@@ -28,93 +28,93 @@ simulation_data/
 └── final_simulation_data_episode_1000_rewards.csv
 ```
 
-## 使用方法
+## Usage
 
-### 1. 运行PPO训练
+### 1. Run PPO Training
 ```bash
 python model/PPO_3rd.py
 ```
 
-训练过程中会：
-- 只保存最后50个episode的数据
-- 训练结束时保存最终数据
-- 自动生成可视化图片
+During training:
+- Only saves data from the last 50 episodes
+- Saves final data when training ends
+- Automatically generates visualization plots
 
-### 2. 从CSV数据生成图片
+### 2. Generate Plots from CSV Data
 
-#### 自动选择最新文件：
+#### Auto-select Latest File:
 ```bash
 python plot_from_csv.py
 ```
 
-#### 指定特定文件：
+#### Specify a Particular File:
 ```bash
 python plot_from_csv.py simulation_data/final_simulation_data_episode_1000.csv
 ```
 
-#### 指定输出目录：
+#### Specify Output Directory:
 ```bash
 python plot_from_csv.py simulation_data/final_simulation_data_episode_1000.csv save_new
 ```
 
-## 数据内容
+## Data Content
 
-### 主要数据文件包含：
-- `timestamp` - 时间戳
-- `ev_soc` - EV电池状态
-- `ess_soc` - ESS电池状态
-- `home_load` - 家庭负载
-- `pv_generation` - 光伏发电
-- `electricity_price` - 电价
-- `air_conditioner_power` - 空调功率
-- `wash_machine_state` - 洗衣机状态
-- `ewh_temp` - 热水器温度
-- `ewh_power` - 热水器功率
-- `total_load` - 总负载
-- `energy_cost` - 能源成本
-- 等等...
+### Main Data File Contains:
+- `timestamp` - Timestamp
+- `ev_soc` - EV battery state
+- `ess_soc` - ESS battery state
+- `home_load` - Home load
+- `pv_generation` - PV generation
+- `electricity_price` - Electricity price
+- `air_conditioner_power` - Air conditioner power
+- `wash_machine_state` - Washing machine state
+- `ewh_temp` - Water heater temperature
+- `ewh_power` - Water heater power
+- `total_load` - Total load
+- `energy_cost` - Energy cost
+- etc...
 
-### 奖励数据文件包含：
-- 各种奖励组件的详细分解
-- 总奖励变化
-- 约束违反情况
+### Reward Data File Contains:
+- Detailed breakdown of various reward components
+- Total reward changes
+- Constraint violation information
 
-## 生成的图片
+## Generated Plots
 
-运行 `plot_from_csv.py` 会生成以下图片：
+Running `plot_from_csv.py` generates the following plots:
 
-1. **EV SOC和电价图** (`ev_soc_and_price.png`)
-2. **ESS功率和光伏发电图** (`ess_power_and_pv.png`)
-3. **空调功率和温度图** (`ac_power_and_temp.png`)
-4. **洗衣机状态图** (`wash_machine_state.png`)
-5. **热水器状态图** (`water_heater_status.png`)
-6. **家庭总负载图** (`total_load.png`)
-7. **能源成本图** (`energy_cost.png`)
-8. **奖励组件图** (`reward_components.png`)
+1. **EV SOC and Price Plot** (`ev_soc_and_price.png`)
+2. **ESS Power and PV Generation Plot** (`ess_power_and_pv.png`)
+3. **AC Power and Temperature Plot** (`ac_power_and_temp.png`)
+4. **Washing Machine State Plot** (`wash_machine_state.png`)
+5. **Water Heater Status Plot** (`water_heater_status.png`)
+6. **Total Home Load Plot** (`total_load.png`)
+7. **Energy Cost Plot** (`energy_cost.png`)
+8. **Reward Components Plot** (`reward_components.png`)
 
-## 优势
+## Advantages
 
-1. **无需重新训练**：调整图片样式时不需要重新训练模型
-2. **数据完整**：保存了所有绘图所需的数据
-3. **灵活调整**：可以随时修改图片样式
-4. **高质量输出**：所有图片都是高分辨率（300 DPI）
-5. **自动化**：训练时自动保存数据
+1. **No Re-training Required**: Adjust plot styles without retraining the model
+2. **Complete Data**: All data needed for plotting is saved
+3. **Flexible Adjustments**: Can modify plot styles at any time
+4. **High Quality Output**: All plots are high resolution (300 DPI)
+5. **Automated**: Data is automatically saved during training
 
-## 注意事项
+## Notes
 
-1. 确保 `simulation_data/` 文件夹存在
-2. CSV文件较大，注意磁盘空间
-3. 图片生成需要一定时间，请耐心等待
-4. 如果修改了环境状态空间，需要重新训练模型
+1. Ensure the `simulation_data/` folder exists
+2. CSV files are large, watch disk space
+3. Plot generation takes time, please be patient
+4. If environment state space is modified, the model needs to be retrained
 
-## 故障排除
+## Troubleshooting
 
-### 常见问题
-1. **找不到CSV文件**：检查 `simulation_data/` 文件夹
-2. **图片生成失败**：检查数据列名是否匹配
-3. **数据不完整**：确保训练正常完成
+### Common Issues
+1. **CSV file not found**: Check the `simulation_data/` folder
+2. **Plot generation failed**: Check if data column names match
+3. **Incomplete data**: Ensure training completed normally
 
-### 调试方法
-1. 检查控制台输出的错误信息
-2. 验证CSV文件的数据完整性
-3. 确认所有必需的列都存在 
+### Debugging Methods
+1. Check console output error messages
+2. Verify CSV file data integrity
+3. Confirm all required columns exist

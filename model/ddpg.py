@@ -1,5 +1,5 @@
 """
-DDPG连续控制解决方案，适配HEMS环境
+DDPG continuous control solution, adapted for HEMS environment
 """
 import os
 import sys
@@ -13,20 +13,20 @@ import torch.nn.functional as F
 import torch.optim as optim
 from collections import deque, OrderedDict
 
-# 添加项目根目录到Python路径（使用相对路径）
+# Add project root directory to Python path (using relative path)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 
 from environment import HomeEnergyManagementEnv
-# 添加evaluation目录到路径
+# Add evaluation directory to path
 sys.path.append(os.path.join(project_root, 'evaluation'))
 from plt import plot_returns
 import matplotlib
 matplotlib.use('Agg')
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ==================== 状态归一化 ====================
+# ==================== State Normalization ====================
 class RunningStats:
     def __init__(self, shape):
         self.mean = np.zeros(shape, dtype=np.float32)
@@ -49,7 +49,7 @@ class RunningStats:
     def normalize(self, x):
         return (x - self.mean) / (np.sqrt(self.var) + 1e-8)
 
-# ==================== 动作转换器 ====================
+# ==================== Action Converter ====================
 class ActionConverter:
     def __init__(self, action_space_config):
         self.action_map = action_space_config
@@ -67,7 +67,7 @@ class ActionConverter:
             'ewh_set_temp': self._convert_single(continuous_action[5], self.action_map['ewh_set_temp'])
         }
 
-# ==================== 网络结构 ====================
+# ==================== Network Structure ====================
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim):
         super().__init__()
@@ -96,7 +96,7 @@ class Critic(nn.Module):
         x = torch.cat([state, action], dim=1)
         return self.net(x)
 
-# ==================== OU噪声 ====================
+# ==================== OU Noise ====================
 class OUNoise:
     def __init__(self, action_dim, mu=0.0, theta=0.15, sigma=0.2):
         self.action_dim = action_dim
@@ -111,7 +111,7 @@ class OUNoise:
         self.state += dx
         return self.state
 
-# ==================== DDPG智能体 ====================
+# ==================== DDPG Agent ====================
 class DDPG:
     def __init__(self, state_dim, action_dim, action_space_config, lr_actor=1e-4, lr_critic=3e-4, gamma=0.96, tau=0.005, buffer_size=100000, batch_size=128):
         self.state_dim = state_dim
@@ -158,7 +158,7 @@ class DDPG:
         rewards = torch.tensor(rewards, dtype=torch.float32, device=device).unsqueeze(1)
         next_states = torch.stack([torch.FloatTensor(s) for s in next_states]).to(device)
         dones = torch.tensor(dones, dtype=torch.float32, device=device).unsqueeze(1)
-        # Critic更新
+        # Update Critic
         with torch.no_grad():
             next_actions = self.actor_target(next_states)
             q_target = self.critic_target(next_states, next_actions)
@@ -168,12 +168,12 @@ class DDPG:
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
-        # Actor更新
+        # Update Actor
         actor_loss = -self.critic(states, self.actor(states)).mean()
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
-        # 软更新
+        # Soft update
         self.soft_update(self.actor_target, self.actor)
         self.soft_update(self.critic_target, self.critic)
         return actor_loss.item(), critic_loss.item()
@@ -192,7 +192,7 @@ class DDPG:
         self.actor.load_state_dict(checkpoint['actor'])
         self.critic.load_state_dict(checkpoint['critic'])
 
-# ==================== 训练主循环 ====================
+# ==================== Training Main Loop ====================
 if __name__ == "__main__":
     env = HomeEnergyManagementEnv()
     env.seed(0)
@@ -202,7 +202,7 @@ if __name__ == "__main__":
     state_keys = sorted(env.state_space.keys())
     state_dim = len(state_keys)
     action_space_config = env.action_space
-    action_dim = 6  # 连续动作维度
+    action_dim = 6  # Continuous action dimension
     agent = DDPG(
         state_dim=state_dim,
         action_dim=action_dim,
@@ -216,10 +216,10 @@ if __name__ == "__main__":
     )
     if USE_STATE_NORMALIZATION:
         running_stats = agent.state_stats
-        print("状态归一化已启用")
+        print("State normalization enabled")
     else:
         running_stats = None
-        print("状态归一化已禁用")
+        print("State normalization disabled")
     num_episodes = 2000
     max_steps = 200
     episode_returns = []
@@ -271,7 +271,7 @@ if __name__ == "__main__":
                 episode_return += reward
                 state = next_state
                 step_count += 1
-                # 约束统计
+                # Constraint statistics
                 ess_soc = state['ess_state'] / env.ess_capacity
                 ev_soc = state['ev_battery_state'] / env.ev_capacity
                 episode_ess_socs.append(ess_soc)
@@ -282,7 +282,7 @@ if __name__ == "__main__":
                 ev_violation = max(0, soc_lower - ev_soc) + max(0, ev_soc - soc_upper)
                 episode_ess_violations += ess_violation
                 episode_ev_violations += ev_violation
-                # 经济与舒适度
+                # Economics and comfort
                 episode_energy_costs.append(env.current_step_cost)
                 indoor_temp1 = env.indoor_temp
                 indoor_temp2 = env.indoor_temp2
@@ -312,7 +312,7 @@ if __name__ == "__main__":
                 episode_user_satisfactions.append(user_satisfaction)
                 if done:
                     break
-            # DDPG参数更新
+            # DDPG parameter update
             actor_loss, critic_loss = agent.update()
             episode_returns.append(episode_return)
             ess_violation_rate = episode_ess_violations / step_count if step_count > 0 else 0
@@ -331,12 +331,12 @@ if __name__ == "__main__":
             ])
             file.flush()
             print(f"Episode {episode + 1}, Return: {episode_return:.2f}, Actor Loss: {actor_loss:.4f}, Critic Loss: {critic_loss:.4f}, Violation: {total_violation_rate:.3f}, Cost: {energy_cost:.2f}")
-        # 保存模型
+        # Save model
         model_save_dir = "model/saved_models"
         os.makedirs(model_save_dir, exist_ok=True)
         model_filename = os.path.join(model_save_dir, f"ddpg_model_{timestamp}{norm_suffix}.pth")
         
-        # ========== 新增：完善DDPG模型保存逻辑 ==========
+        # ========== New: Complete DDPG model saving logic ==========
         model_save_dict = {
             'actor_state_dict': agent.actor.state_dict(),
             'critic_state_dict': agent.critic.state_dict(),
@@ -349,25 +349,25 @@ if __name__ == "__main__":
                 'state_dim': state_dim,
                 'action_dim': action_dim,
                 'action_space_config': action_space_config,
-                'lr_actor': agent.actor_optimizer.param_groups[0]['lr'], # 获取当前学习率
-                'lr_critic': agent.critic_optimizer.param_groups[0]['lr'], # 获取当前学习率
+                'lr_actor': agent.actor_optimizer.param_groups[0]['lr'], # Get current learning rate
+                'lr_critic': agent.critic_optimizer.param_groups[0]['lr'], # Get current learning rate
                 'gamma': agent.gamma,
                 'tau': agent.tau,
-                'buffer_size': agent.memory.maxlen, # 使用deque的maxlen
+                'buffer_size': agent.memory.maxlen, # Use deque's maxlen
                 'batch_size': agent.batch_size,
                 'use_state_normalization': USE_STATE_NORMALIZATION
             }
         }
-        # 如果使用了状态归一化，保存running_stats
+        # If state normalization is used, save running_stats
         if USE_STATE_NORMALIZATION and running_stats is not None:
             model_save_dict['running_stats_mean'] = running_stats.mean
-            model_save_dict['running_stats_std'] = running_stats.var # 使用方差作为标准差
+            model_save_dict['running_stats_std'] = running_stats.var # Use variance as standard deviation
             model_save_dict['running_stats_count'] = running_stats.count
         
         torch.save(model_save_dict, model_filename)
-        print(f"模型已保存到: {model_filename}")
+        print(f"Model saved to: {model_filename}")
     # env.save_episode_costs()
     env.visualize()
     env.plot_reward_components()
     plot_returns(episode_returns)
-    print(f"训练完成！Returns数据已保存到: {csv_filename}")
+    print(f"Training completed! Returns data saved to: {csv_filename}")

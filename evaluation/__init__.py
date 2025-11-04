@@ -1,13 +1,13 @@
 """
-HEMS项目评估模块
-包含所有评估、绘图和对比分析相关的功能
+HEMS project evaluation module
+Contains all evaluation, plotting, and comparison analysis related functionality
 """
 
-# 主要评估类
+# Main evaluation classes
 from .strategy_carbon_comparison import StrategyCarbonComparison
 from .model_evaluation import ModelEvaluator
 
-# 绘图功能
+# Plotting functions
 from .plt import plot_returns
 
 __all__ = [

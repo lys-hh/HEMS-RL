@@ -1,5 +1,5 @@
 """
-此文件用于模拟电动汽车与环境交互，集成洗衣机和空调设备
+This file is used to simulate the interaction between electric vehicles and the environment, integrating washing machines and air conditioning equipment
 """
 from datetime import datetime, timedelta
 from scipy.stats import uniform
@@ -9,59 +9,59 @@ import numpy as np
 from matplotlib import pyplot as plt, gridspec
 from matplotlib.ticker import MaxNLocator
 from interface import DataInterface
-import csv  # 添加CSV模块
-import os   # 添加OS模块
+import csv  # Add CSV module
+import os   # Add OS module
 import pandas as pd
 
 class HomeEnergyManagementEnv:
     def __init__(self, ev_capacity=24, ess_capacity=24, charge_efficiency=0.95, discharge_efficiency=0.95):
-        self.ev_capacity = ev_capacity  # 电动汽车电池容量
-        self.ess_capacity = ess_capacity  # 储能电池容量
-        self.charge_efficiency = charge_efficiency  # 充电效率
-        self.discharge_efficiency = discharge_efficiency  # 放电效率
-        self.ev_min_charge = 12  # 设置 EV 离家时的最低电量需求
+        self.ev_capacity = ev_capacity  # EV battery capacity
+        self.ess_capacity = ess_capacity  # ESS battery capacity
+        self.charge_efficiency = charge_efficiency  # Charge efficiency
+        self.discharge_efficiency = discharge_efficiency  # Discharge efficiency
+        self.ev_min_charge = 12  # Set minimum charge requirement when EV leaves home
 
-        # 初始化惩罚系数，实现动态调整
-        self.energy_weight = 0.1  # 电网成本权重
-        self.user_satisfaction_weight0 = 0.5  # 用户不满意度权重
+        # Initialize penalty coefficients for dynamic adjustment
+        self.energy_weight = 0.1  # Grid cost weight
+        self.user_satisfaction_weight0 = 0.5  # User dissatisfaction weight
         self.user_satisfaction_weight1 = 0.5  #
         self.user_satisfaction_weight2 = 0.2
         self.violation_weight = 0.05
         self.temp_weight = 0.1
-        self.ess_weight = 0.1  # 原1
-        self.ev_weight = 0.1  # 原1
+        self.ess_weight = 0.1  # Originally 1
+        self.ev_weight = 0.1  # Originally 1
 
         self.total_cost = 0
 
-        self.episode_costs = []  # 存储每个episode的总成本
-        self.current_step_cost = 0  # 存储当前时间步的成本
+        self.episode_costs = []  # Store total cost for each episode
+        self.current_step_cost = 0  # Store cost for current time step
 
         self.state_space = {
-            'home_load': (0, 10),  # 家庭用电量范围
-            'pv_generation': (0, 5),  # 光伏发电量范围
-            'ess_state': (0, ess_capacity),  # 储能电池容量x
-            'ev_battery_state': (0, ev_capacity),  # 电动汽车电池容量
-            'time_index': (0, 48),  # 一天中的时间，以0.5为步长
-            'electricity_price': (0, 2),  # 电价范围，示例值
+            'home_load': (0, 10),  # Household electricity consumption range
+            'pv_generation': (0, 5),  # PV generation range
+            'ess_state': (0, ess_capacity),  # ESS battery capacity
+            'ev_battery_state': (0, ev_capacity),  # EV battery capacity
+            'time_index': (0, 48),  # Time of day, with 0.5 as step size
+            'electricity_price': (0, 2),  # Electricity price range, example values
             'temperature': (0, 40),
-            'wash_machine_state': (0, 1),  # 洗衣机状态，0表示关闭、1表示运行
+            'wash_machine_state': (0, 1),  # Washing machine state, 0 means off, 1 means running
             # 'start_time': (-1, 48),
-            # 'price_trend': (-1, 1),  # 电价趋势（过去3小时均值与当前对比）
-            'Air_conditioner_power': (0, 5),  # 空调功率范围值
+            # 'price_trend': (-1, 1),  # Electricity price trend (past 3-hour average vs current)
+            'Air_conditioner_power': (0, 5),  # AC power range
             'Air_conditioner_power2': (0, 5),
-            'ewh_temp': (40, 70),  # 热水器水温
-            'ewh_power': (0, 2)   # 热水器功率
+            'ewh_temp': (40, 70),  # Water heater water temperature
+            'ewh_power': (0, 2)   # Water heater power
         }
         self.action_space = {
-            'ev_power': (-6.6, -3.3, 0, 3.3, 6.6),  # 电动汽车充放电功率范围
+            'ev_power': (-6.6, -3.3, 0, 3.3, 6.6),  # EV charge/discharge power range
 
-            'battery_power': (-4.4, -2.2, 0, 2.2, 4.4),  # 储能电池充电功率范围
+            'battery_power': (-4.4, -2.2, 0, 2.2, 4.4),  # ESS charge/discharge power range
 
-            'wash_machine_schedule': (0, 1, 2, 3, 4, 5, 6),  # 洗衣机调度动作，0表示不运行，1表示运行
-            'Air_conditioner_set_temp': (16, 18, 20, 22, 24, 26, 28, 30),  # 空调设定温度
+            'wash_machine_schedule': (0, 1, 2, 3, 4, 5, 6),  # Washing machine scheduling actions, 0 means not running, 1 means running
+            'Air_conditioner_set_temp': (16, 18, 20, 22, 24, 26, 28, 30),  # AC set temperature
             'Air_conditioner_set_temp2': (16, 18, 20, 22, 24, 26, 28, 30),
 
-            'ewh_set_temp': (40, 45, 50, 55, 60, 65, 70)  # 离散温度设定动作
+            'ewh_set_temp': (40, 45, 50, 55, 60, 65, 70)  # Discrete temperature setting actions
         }
         self.current_time = '2011-07-03'
         self.current_time_index = 0
@@ -70,25 +70,25 @@ class HomeEnergyManagementEnv:
         self.current_ev_power = 0
         self.current_battery_power = 0
 
-        self.ev_battery_record = []  # 记录 EV 电量
-        self.ess_state_record = []  # 记录 ESS 电量
-        self.home_load_record = []  # 记录电网负荷
-        self.pv_generation_record = []  # 记录光伏发电量
-        self.electricity_price_record = []  # 记录电价
-        self.ev_at_home_record = []  # 记录 EV 是否在家
-        self.wash_machine_record = []  # 记录洗衣机状态
-        self.air_conditioner_power_record = []  # 记录空调功率
-        self.ess_actions = []  # 记录储能电池充电功率
-        self.wash_machine_actions = []  # 记录洗衣机动作
-        self.air_conditioner_actions = []  # 记录空调动作
+        self.ev_battery_record = []  # Record EV charge level
+        self.ess_state_record = []  # Record ESS charge level
+        self.home_load_record = []  # Record grid load
+        self.pv_generation_record = []  # Record PV generation
+        self.electricity_price_record = []  # Record electricity price
+        self.ev_at_home_record = []  # Record whether EV is at home
+        self.wash_machine_record = []  # Record washing machine state
+        self.air_conditioner_power_record = []  # Record AC power
+        self.ess_actions = []  # Record ESS charge/discharge power
+        self.wash_machine_actions = []  # Record washing machine actions
+        self.air_conditioner_actions = []  # Record AC actions
 
-        # 新增ESS充放电来源记录
-        self.ess_charge_pv = []  # 光伏充电量
-        self.ess_charge_grid = []  # 电网充电量
-        self.ess_discharge_ev = []  # 用于EV的放电量
-        self.ess_discharge_house = []  # 用于家庭负荷的放电量
+        # New ESS charge/discharge source records
+        self.ess_charge_pv = []  # PV charging amount
+        self.ess_charge_grid = []  # Grid charging amount
+        self.ess_discharge_ev = []  # Discharge amount for EV
+        self.ess_discharge_house = []  # Discharge amount for household load
 
-        # 新增记录变量
+        # New record variables
         self.records = {
             'timestamps': [],
             'ev_soc': [],
@@ -101,10 +101,10 @@ class HomeEnergyManagementEnv:
             'outdoor_temp': [],
             'current_daily_cost': 0,
             'total_load':[],
-            'user_dissatisfaction': []  # 用户不满意度记录
+            'user_dissatisfaction': []  # User dissatisfaction record
         }
 
-        # 新增奖励记录容器
+        # New reward record containers
         self.reward_components = {
             'total': [],
             'energy_cost': [],
@@ -116,53 +116,53 @@ class HomeEnergyManagementEnv:
             # 'sell': []
         }
 
-        # ================== 新增热水器参数 ==================
+        # ================== New Water Heater Parameters ==================
         self.ewh_params = {
-            # 'ξ_ewh': 0.993,  # 水温衰减系数
-            # 'R_prime': 4.18,  # 热传导参数 (kJ/°C)
-            'h': 10,  # 对流换热系数
-            'temp_cold': 18,  # 冷水温度 (°C)
-            'surface_area': 2,  # 水箱表面积(m^2)
-            'volume': 100,  # 水箱容量 (L)
-            'mass': 100,  # 水的质量（kg）
-            'temp_min': 30.0,  # 最低可接受水温 (°C)
-            'temp_max': 100.0,  # 最高安全水温 (°C)
-            'temp_init': 40,  # 初始水温 (°C)
-            'user_flow_mean': 1.5,  # 平均用水流量 (L/h)
-            'user_flow_std': 0.3  # 用水流量标准差
+            # 'ξ_ewh': 0.993,  # Water temperature decay coefficient
+            # 'R_prime': 4.18,  # Heat transfer parameter (kJ/°C)
+            'h': 10,  # Convective heat transfer coefficient
+            'temp_cold': 18,  # Cold water temperature (°C)
+            'surface_area': 2,  # Tank surface area (m^2)
+            'volume': 100,  # Tank capacity (L)
+            'mass': 100,  # Water mass (kg)
+            'temp_min': 30.0,  # Minimum acceptable water temperature (°C)
+            'temp_max': 100.0,  # Maximum safe water temperature (°C)
+            'temp_init': 40,  # Initial water temperature (°C)
+            'user_flow_mean': 1.5,  # Average water flow rate (L/h)
+            'user_flow_std': 0.3  # Water flow rate standard deviation
         }
 
-        # 新增记录变量
+        # New record variables
         self.ewh_temp_record = []
         self.ewh_power_record = []
         self.user_flow_record = []
 
-        # 洗衣机相关参数
-        self.wash_machine_power = 1.5  # 洗衣机固定功率（kW）
-        self.wash_machine_duration = 1  # 洗衣机运行时长（小时）
-        self.current_period_start = None  # 当前周期开始时间
-        self.has_run_in_current_period = False  # 当前周期是否已运行
-        self.time_deviation = 0  # 时间偏移量（分钟）
-        self.wash_machine_state = 0  # 初始状态为关闭
-        self.last_action_time = None  # 记录启动时间
-        self.remaining_runtime = 0  # 剩余运行时间（30分钟步数）
-        self.wash_machine_preferred_time = (6, 20)  # 用户偏好的洗衣机运行时间范围
+        # Washing machine related parameters
+        self.wash_machine_power = 1.5  # Washing machine fixed power (kW)
+        self.wash_machine_duration = 1  # Washing machine runtime (hours)
+        self.current_period_start = None  # Current period start time
+        self.has_run_in_current_period = False  # Whether has run in current period
+        self.time_deviation = 0  # Time offset (minutes)
+        self.wash_machine_state = 0  # Initial state is off
+        self.last_action_time = None  # Record start time
+        self.remaining_runtime = 0  # Remaining runtime (30-minute steps)
+        self.wash_machine_preferred_time = (6, 20)  # User preferred washing machine runtime range
 
-        # 空调相关参数
-        self.indoor_temp = 25  # 初始室内温度
-        self.indoor_temp2 = 25  # 第二台空调
-        self.outdoor_temp = 25  # 初始室外温度
-        self.temp_change_rate = 0.5  # 室内温度变化率
-        self.user_temp_preference = 22  # 用户偏好温度
-        self.user_temp_preference2 = 18  # 第二台空调
+        # AC related parameters
+        self.indoor_temp = 25  # Initial indoor temperature
+        self.indoor_temp2 = 25  # Second AC
+        self.outdoor_temp = 25  # Initial outdoor temperature
+        self.temp_change_rate = 0.5  # Indoor temperature change rate
+        self.user_temp_preference = 22  # User preferred temperature
+        self.user_temp_preference2 = 18  # Second AC
 
     def get_state_vector(self, state_dict):
-        """将状态字典转换为有序列表"""
-        ordered_keys = sorted(state_dict.keys())  # 按字母顺序排序
+        """Convert state dictionary to ordered list"""
+        ordered_keys = sorted(state_dict.keys())  # Sort alphabetically
         return [state_dict[k] for k in ordered_keys]
 
     def get_action_mask(self, state):
-        """返回基于当前电量的动态动作掩码"""
+        """Return dynamic action mask based on current charge level"""
         masks = {
             'battery_power': [True] * len(self.action_space['battery_power']),
             'ev_power': [True] * len(self.action_space['ev_power'])
@@ -170,44 +170,44 @@ class HomeEnergyManagementEnv:
 
         delta_t = 0.5
 
-        # 1. ESS电池动作掩码 - 动态计算
-        # 考虑放电效率（假设95%）
+        # 1. ESS battery action mask - dynamic calculation
+        # Consider discharge efficiency (assume 95%)
         max_discharge = (state['ess_state'] / delta_t) * 0.95
         max_charge = ((self.ess_capacity - state['ess_state']) / delta_t) / 0.95
         
         for idx, action_value in enumerate(self.action_space['battery_power']):
-            # 放电动作：只能选择小于等于当前可放电量的动作
+            # Discharge action: can only select actions less than or equal to current dischargeable amount
             if action_value < 0 and abs(action_value) > max_discharge:
                 masks['battery_power'][idx] = False
 
-            # 充电动作：只能选择小于等于当前可充电空间的充电功率
+            # Charge action: can only select charge power less than or equal to current chargeable space
             if action_value > 0 and action_value > max_charge:
                 masks['battery_power'][idx] = False
 
-        # 2. EV电池动作掩码 - 同样动态计算
+        # 2. EV battery action mask - also dynamic calculation
         max_ev_discharge = (state['ev_battery_state'] / delta_t) * 0.95
         max_ev_charge = ((self.ev_capacity - state['ev_battery_state']) / delta_t) / 0.95
         
         for idx, action_value in enumerate(self.action_space['ev_power']):
-            # 放电限制
+            # Discharge limit
             if action_value < 0 and abs(action_value) > max_ev_discharge:
                 masks['ev_power'][idx] = False
 
-            # 充电限制
+            # Charge limit
             if action_value > 0 and action_value > max_ev_charge:
                 masks['ev_power'][idx] = False
 
-        # 3. EV不在家时掩码
+        # 3. EV not at home mask
         if not self.is_ev_at_home():
             for idx, action_value in enumerate(self.action_space['ev_power']):
-                if action_value != 0:  # 只能选择0功率动作
+                if action_value != 0:  # Can only select 0 power action
                     masks['ev_power'][idx] = False
 
         return masks
 
     def reset(self):
         self.total_cost = 0
-        # 使用实际输入数据初始化状态
+        # Initialize state using actual input data
         self.current_time = '2011-07-03'
         self.current_time_index = 0
         self.current_ev_power = 0
@@ -229,7 +229,7 @@ class HomeEnergyManagementEnv:
             'ewh_temp': self.ewh_params['temp_init'],
             'ewh_power': 0
         }
-        self.ev_battery_record = []   # 重置记录
+        self.ev_battery_record = []   # Reset records
         self.ess_state_record = []
         self.home_load_record = []
         self.pv_generation_record = []
@@ -238,9 +238,9 @@ class HomeEnergyManagementEnv:
         self.wash_machine_record = []
         self.air_conditioner_power_record = []
         self.air_conditioner_power_record2 = []
-        self.ess_actions = []  # 重置 ESS 动作记录
+        self.ess_actions = []  # Reset ESS action records
 
-        # 重置记录
+        # Reset records
         self.records = {
             'timestamps': [],
             'ev_soc': [],
@@ -256,7 +256,7 @@ class HomeEnergyManagementEnv:
             'user_dissatisfaction': []
         }
 
-        # 重置奖励记录容器
+        # Reset reward record containers
         self.reward_components = {
             'total': [],
             'energy_cost': [],
@@ -268,20 +268,20 @@ class HomeEnergyManagementEnv:
             # 'sell': []
         }
 
-        # 重置洗衣机相关变量
-        self.current_period_start = None  # 当前周期开始时间
-        self.has_run_in_current_period = False  # 当前周期是否已运行
-        self.time_deviation = 0  # 时间偏移量（分钟）
-        self.wash_machine_state = 0  # 初始状态为关闭
-        self.last_action_time = None  # 记录启动时间
-        self.remaining_runtime = 0  # 剩余运行时间（30分钟步数）
+        # Reset washing machine related variables
+        self.current_period_start = None  # Current period start time
+        self.has_run_in_current_period = False  # Whether has run in current period
+        self.time_deviation = 0  # Time offset (minutes)
+        self.wash_machine_state = 0  # Initial state is off
+        self.last_action_time = None  # Record start time
+        self.remaining_runtime = 0  # Remaining runtime (30-minute steps)
 
-        # 重置空调相关变量
+        # Reset AC related variables
         self.indoor_temp = 25
         self.indoor_temp2 = 20
         self.outdoor_temp = self.data_interface.get_outdoor_temp(self.current_time, self.current_time_index)
 
-        # 重置记录
+        # Reset records
         self.ewh_temp_record = []
         self.ewh_power_record = []
         self.user_flow_record = []
@@ -290,59 +290,59 @@ class HomeEnergyManagementEnv:
 
     def step(self, state, action):
 
-        # === 动作物理裁剪，保证环境物理合理性 ===
-        # --- 储能电池功率裁剪 ---
+        # === Action physical clipping to ensure environment physical rationality ===
+        # --- ESS battery power clipping ---
         ess_soc = state['ess_state']
-        if action['battery_power'] < 0:  # 放电
+        if action['battery_power'] < 0:  # Discharge
             max_discharge = min(abs(action['battery_power']), ess_soc / 0.5 * self.discharge_efficiency)
             action['battery_power'] = -max_discharge
-        elif action['battery_power'] > 0:  # 充电
+        elif action['battery_power'] > 0:  # Charge
             max_charge = min(action['battery_power'], (self.ess_capacity - ess_soc) / 0.5 / self.charge_efficiency)
             action['battery_power'] = max_charge
 
-        # --- 电动汽车功率裁剪 ---
+        # --- EV power clipping ---
         ev_soc = state['ev_battery_state']
-        if action['ev_power'] < 0:  # 放电
+        if action['ev_power'] < 0:  # Discharge
             max_discharge = min(abs(action['ev_power']), ev_soc / 0.5 * self.discharge_efficiency)
             action['ev_power'] = -max_discharge
-        elif action['ev_power'] > 0:  # 充电
+        elif action['ev_power'] > 0:  # Charge
             max_charge = min(action['ev_power'], (self.ev_capacity - ev_soc) / 0.5 / self.charge_efficiency)
             action['ev_power'] = max_charge
 
 
-        self.current_ev_power=action['ev_power']  # 存储当前动作
+        self.current_ev_power=action['ev_power']  # Store current action
         current_dt = datetime.strptime(self.current_time, '%Y-%m-%d') + \
                      timedelta(minutes=30 * self.current_time_index)
 
-        # 更新室外温度
+        # Update outdoor temperature
         self.outdoor_temp = self.data_interface.get_outdoor_temp(self.current_time, self.current_time_index)
 
-        # 更新空调状态
+        # Update AC state
         new_air_conditioner_power, self.indoor_temp = self.update_air_conditioner(action['Air_conditioner_set_temp'], self.indoor_temp)
         self.state['Air_conditioner_power'] = new_air_conditioner_power
 
         new_air_conditioner_power2, self.indoor_temp2 = self.update_air_conditioner(action['Air_conditioner_set_temp2'], self.indoor_temp2)
         self.state['Air_conditioner_power2'] = new_air_conditioner_power2
 
-        # 更新洗衣机状态
+        # Update washing machine state
         new_wash_machine_state = self.update_wash_machine2(action['wash_machine_schedule'])
         self.state['wash_machine_state'] = new_wash_machine_state
 
         # wash_feature = self._get_wash_machine_features(self.current_time_index)
 
-        # 更新热水器功率
+        # Update water heater power
         power = self._fuzzy_heating_control(
             action['ewh_set_temp'],
             state['ewh_temp']
         )
 
-        #  更新热水器状态
+        # Update water heater state
         new_ewh_temp, user_flow = self.update_water_heater(
             power,
             state['ewh_temp']
         )
 
-        # 更新电动汽车和储能电池状态
+        # Update EV and ESS battery state
         self.state = {
             'home_load': self.data_interface.get_home_load(self.current_time, self.current_time_index),
             'pv_generation': self.data_interface.get_pv_generation(self.current_time, self.current_time_index),
@@ -373,47 +373,47 @@ class HomeEnergyManagementEnv:
         self.air_conditioner_power_record.append(self.state['Air_conditioner_power'])
         self.air_conditioner_power_record2.append(self.state['Air_conditioner_power2'])
 
-        # 记录 ESS 动作
+        # Record ESS action
         self.ess_actions.append(action['battery_power'])
 
-        # 记录温度数据
+        # Record temperature data
         self.records['indoor_temp'].append(self.indoor_temp)
         self.records['indoor_temp2'].append(self.indoor_temp2)
         self.records['outdoor_temp'].append(self.outdoor_temp)
 
-        # 更新记录
+        # Update records
         self.records['timestamps'].append(current_dt)
         self.records['ev_soc'].append(self.state['ev_battery_state'])
         self.records['ess_soc'].append(self.state['ess_state'])
 
         self.records['total_load'].append(self.total_load_compute())
 
-        # 记录热水器数据
+        # Record water heater data
         self.ewh_temp_record.append(new_ewh_temp)
         self.ewh_power_record.append(state['ewh_power'])
         self.user_flow_record.append(user_flow)
 
-        self.current_time_index += 1  # 增加半小时
+        self.current_time_index += 1  # Add half hour
 
-        if self.current_time_index >= 48:  # 如果当前时间索引达到48，则增加一天
+        if self.current_time_index >= 48:  # If current time index reaches 48, add one day
             self.current_time_index = 0
-            # 将当前日期字符串转换为datetime对象
+            # Convert current date string to datetime object
             current_date = datetime.strptime(self.current_time, '%Y-%m-%d')
-            # 增加一天
+            # Add one day
             current_date += timedelta(days=1)
-            # 将datetime对象转换回字符串格式
+            # Convert datetime object back to string format
             self.current_time = current_date.strftime('%Y-%m-%d')
 
-            # 强制重置洗衣机状态（避免跨天残留）
+            # Force reset washing machine state (avoid cross-day residue)
             self.wash_machine_used_today = False
 
         return self.state, reward, done
 
     def update_ev_battery(self, ev_charge_discharge):
-        # 如果 EV 刚刚到家，更新电量状态
+        # If EV just arrived home, update charge state
         if (not self.data_interface.is_ev_at_home(self.current_time, self.current_time_index - 1)
                 and self.is_ev_at_home()):
-            # 使用上一次出行前的电量状态来模拟到家后的电量
+            # Use charge state before last trip to simulate charge state after arriving home
             ev_state_init = self.update_ev_state_after_trip(self.state['ev_battery_state'])
             if ev_charge_discharge > 0:
                 new_soc = ev_state_init + (ev_charge_discharge * self.charge_efficiency) * 0.5
@@ -425,8 +425,8 @@ class HomeEnergyManagementEnv:
             else:
                 new_soc = self.state['ev_battery_state'] + (ev_charge_discharge / self.charge_efficiency) * 0.5
 
-        # 强制SOC边界
-        # min_soc = self.ev_min_charge * 0.8  # 保持安全裕量
+        # Force SOC boundary
+        # min_soc = self.ev_min_charge * 0.8  # Maintain safety margin
         return np.clip(new_soc, 0, self.ev_capacity)
 
     def total_load_compute(self):
@@ -446,9 +446,9 @@ class HomeEnergyManagementEnv:
         # assert charge_power * discharge_power == 0, "ESS cannot charge and discharge simultaneously"
         # diff = pv_generation - self.total_load_compute()
 
-        if ess_charge_discharge > 0:  # 充电动作   =  pv + grid
+        if ess_charge_discharge > 0:  # Charge action = pv + grid
             new_ess = self.state['ess_state'] + ess_charge_discharge * self.charge_efficiency * 0.5
-        else:   # 放电动作 = home + grid
+        else:   # Discharge action = home + grid
             new_ess = self.state['ess_state'] + ess_charge_discharge / self.charge_efficiency * 0.5
 
         return np.clip(new_ess, 0, self.ess_capacity)
@@ -467,51 +467,51 @@ class HomeEnergyManagementEnv:
         pref_start = self.current_period_start.replace(hour=self.wash_machine_preferred_time[0], minute=0)
         pref_end = self.current_period_start.replace(hour=self.wash_machine_preferred_time[1],
                                                      minute=0) - timedelta(hours=self.wash_machine_duration)
-        # 计算时间偏移量（小时）
+        # Calculate time offset (hours)
         if scheduled_time < pref_start:
-            # 在偏好时间之前
+            # Before preferred time
             self.time_deviation = (pref_start - scheduled_time).total_seconds() / 3600
         elif scheduled_time > pref_end:
-            # 在偏好时间之后
+            # After preferred time
             self.time_deviation = (scheduled_time - pref_end).total_seconds() / 3600
         else:
-            # 在偏好时间段内
+            # Within preferred time period
             self.time_deviation = 0
 
     def update_wash_machine2(self, schedule_action):
         current_dt = datetime.strptime(self.current_time, '%Y-%m-%d') + \
                      timedelta(minutes=30 * self.current_time_index)
-        # 转换为Python内置整数
-        schedule_action = int(schedule_action)  # 添加这一行
+        # Convert to Python built-in integer
+        schedule_action = int(schedule_action)  # Add this line
 
-        # 处理运行中状态
+        # Handle running state
         if self.remaining_runtime > 0:
             self.wash_machine_state = 1
             self.remaining_runtime -= 1
             return self.wash_machine_state
 
-        # 周期检测（每天6点重置）
+        # Period detection (reset at 6 AM daily)
         current_period_start = self._get_period_start(current_dt)
-        current_period_end = self._get_period_end(current_dt)  # 获取当前周期结束时间
+        current_period_end = self._get_period_end(current_dt)  # Get current period end time
         if current_period_start != self.current_period_start:
             self.current_period_start = current_period_start
             self.has_run_in_current_period = False
             self.wash_machine_state = 0
 
-        # 强制启动逻辑：如果距离周期结束不足1小时且尚未运行
+        # Force start logic: if less than 1 hour until period end and hasn't run yet
         time_to_end = (current_period_end - current_dt).total_seconds() / 3600
         if time_to_end <= 1 and not self.has_run_in_current_period:
-            schedule_action = 1  # 强制立即启动
+            schedule_action = 1  # Force immediate start
 
         if schedule_action > 1 and not self.has_run_in_current_period:
             scheduled_time = current_dt + timedelta(hours=schedule_action - 1)
             self.wash_machine_state = 0
             self.update_time_deviation(scheduled_time)
         elif schedule_action == 1 and not self.has_run_in_current_period:
-            scheduled_time = current_dt  # 当前时间启动
+            scheduled_time = current_dt  # Start at current time
             self.wash_machine_state = 1
             self.has_run_in_current_period = True
-            self.remaining_runtime = 1  # 1小时=2个时间步
+            self.remaining_runtime = 1  # 1 hour = 2 time steps
             self.update_time_deviation(scheduled_time)
         else:
             self.wash_machine_state = 0
@@ -520,189 +520,189 @@ class HomeEnergyManagementEnv:
         return self.wash_machine_state
 
     def update_air_conditioner(self, set_temp, indoor_temp):
-        """更新空调功率"""
-        # 计算设定温度与当前室内温度的差异
+        """Update AC power"""
+        # Calculate difference between set temperature and current indoor temperature
         temp_diff = set_temp - indoor_temp
-        # 模糊控制规则：根据温差决定功率
-        if temp_diff > 0:  # 制热模式
-            # 定义制热模式下的模糊控制规则
+        # Fuzzy control rules: determine power based on temperature difference
+        if temp_diff > 0:  # Heating mode
+            # Define fuzzy control rules for heating mode
             rules = [
                 {'range': (0, 0.5), 'power': 0},
-                {'range': (0.5, 1), 'power': 0.5},  # 0.5可实现精准控制
+                {'range': (0.5, 1), 'power': 0.5},  # 0.5 enables precise control
                 {'range': (1, 2), 'power': 1.0},
                 {'range': (2, 3), 'power': 1.5},
                 {'range': (3, 4), 'power': 2.0},
                 {'range': (4, np.inf), 'power': 3.0}
             ]
         else:
-            # 定义制冷模式下的模糊控制规则
+            # Define fuzzy control rules for cooling mode
             rules = [
                 {'range': (-0.5, 0), 'power': 0},
-                {'range': (-1, -0.5), 'power': 0.5},  # 0.5可实现精准控制
+                {'range': (-1, -0.5), 'power': 0.5},  # 0.5 enables precise control
                 {'range': (-2, -1), 'power': 1.0},
                 {'range': (-3, -2), 'power': 1.5},
                 {'range': (-4, -3), 'power': 2.0},
                 {'range': (-np.inf, -4), 'power': 3.0}
             ]
 
-        # 根据温差找到对应的功率
-        power = 0  # 默认功率
+        # Find corresponding power based on temperature difference
+        power = 0  # Default power
         for rule in rules:
             if rule['range'][0] <= temp_diff < rule['range'][1]:
                 power = rule['power']
                 break
 
-        # 动态计算温度变化率
-        max_power = 3.0  # 空调最大功率
-        efficiency = power / max_power if max_power > 0 else 0  # 计算当前功率下的效率
-        temp_change = self.temp_change_rate * efficiency * temp_diff  # 根据功率和温差计算温度变化
+        # Dynamically calculate temperature change rate
+        max_power = 3.0  # AC maximum power
+        efficiency = power / max_power if max_power > 0 else 0  # Calculate efficiency at current power
+        temp_change = self.temp_change_rate * efficiency * temp_diff  # Calculate temperature change based on power and temperature difference
 
-        # 模拟用户行为的随机扰动
+        # Simulate random disturbance from user behavior
         user_behavior = np.random.normal(0, 0.2)
-        temp_change += user_behavior  # 将随机扰动加入温度变化中
+        temp_change += user_behavior  # Add random disturbance to temperature change
 
-        # 当空调关闭时（power == 0），室内温度逐渐向室外温度靠拢
+        # When AC is off (power == 0), indoor temperature gradually approaches outdoor temperature
         if power == 0:
-            # 室内温度向室外温度靠拢的速率可以调整
+            # Rate at which indoor temperature approaches outdoor temperature can be adjusted
             temp_change += (self.outdoor_temp - indoor_temp) * 0.4 * self.temp_change_rate
 
-        # 更新室内温度
+        # Update indoor temperature
         indoor_temp += temp_change
 
-        # 确保室内温度在合理范围内
+        # Ensure indoor temperature is within reasonable range
         indoor_temp = np.clip(indoor_temp, 10, 40)
 
-        # 确保空调功率在合理范围内
+        # Ensure AC power is within reasonable range
         power = np.clip(power, 0, 3.0)
 
         return power, indoor_temp
 
     def update_water_heater(self, power, current_temp):
-        """更新热水器状态（物理模型）"""
+        """Update water heater state (physical model)"""
         params = self.ewh_params
-        delta_t = 0.5  # 半小时时间间隔
+        delta_t = 0.5  # Half-hour time interval
 
-        # # 生成随机用水量 (L/h)
-        # flow_rate = np.random.uniform(1, 2) if np.random.rand() < 0.3 else 0  # 假设30%的概率有用水行为
+        # # Generate random water usage (L/h)
+        # flow_rate = np.random.uniform(1, 2) if np.random.rand() < 0.3 else 0  # Assume 30% probability of water usage
 
-        # 定义用水高峰时间段
-        peak_morning = 6 <= self.current_time_index / 2 <= 9  # 早晨高峰 6-9点
-        peak_evening = 18 <= self.current_time_index / 2 <= 22  # 傍晚高峰 18-22点
+        # Define peak water usage time periods
+        peak_morning = 6 <= self.current_time_index / 2 <= 9  # Morning peak 6-9 AM
+        peak_evening = 18 <= self.current_time_index / 2 <= 22  # Evening peak 6-10 PM
 
-        # 根据时间段设置不同的用水概率和用水量范围
+        # Set different water usage probabilities and ranges based on time period
         if peak_morning or peak_evening:
-            # 高峰时段用水概率和用水量
+            # Peak period water usage probability and amount
             if peak_morning:
-                # 早晨高峰用水量更大，概率更高
-                flow_rate_prob = 0.6  # 60% 概率有用水行为
+                # Morning peak has larger water usage and higher probability
+                flow_rate_prob = 0.6  # 60% probability of water usage
                 flow_rate_min, flow_rate_max = 3, 5  # 3-5 L/h
             else:
-                # 傍晚高峰用水量稍小，概率稍低
-                flow_rate_prob = 0.5  # 50% 概率有用水行为
+                # Evening peak has slightly smaller water usage and slightly lower probability
+                flow_rate_prob = 0.5  # 50% probability of water usage
                 flow_rate_min, flow_rate_max = 2, 4  # 2-4 L/h
 
-            # 高峰时段有更高的用水概率
+            # Peak periods have higher water usage probability
             if np.random.rand() < flow_rate_prob:
                 flow_rate = np.random.uniform(flow_rate_min, flow_rate_max)
             else:
                 flow_rate = 0
         else:
-            # 平峰时段用水概率和用水量
-            flow_rate_prob = 0.2  # 20% 概率有用水行为
+            # Off-peak period water usage probability and amount
+            flow_rate_prob = 0.2  # 20% probability of water usage
             if np.random.rand() < flow_rate_prob:
-                # 平峰时段用水量较小
+                # Off-peak periods have smaller water usage
                 flow_rate = np.random.uniform(0.5, 1.5)  # 0.5-1.5 L/h
             else:
                 flow_rate = 0
 
-        # 特殊处理：在平峰时段偶尔会有稍大的用水量
+        # Special handling: occasionally have slightly larger water usage during off-peak periods
         if not (peak_morning or peak_evening) and np.random.rand() < 0.1:
             flow_rate = np.random.uniform(1.5, 2)  # 1.5-2 L/h
-        # === 用水量逻辑结束 ===
+        # === Water usage logic end ===
 
-        # 环境参数
+        # Environment parameters
         env_temp = self.state['temperature']
-        temp_cold = max(18, env_temp - 2)  # 最低18°C冷水
-        # temp_cold = 18 # 最低18°C冷水
+        temp_cold = max(18, env_temp - 2)  # Minimum 18°C cold water
+        # temp_cold = 18 # Minimum 18°C cold water
 
-        new_temp = current_temp  # 初始化新温度
+        new_temp = current_temp  # Initialize new temperature
 
-        # 情况1: 注入冷水时的温度变化
+        # Case 1: Temperature change when injecting cold water
         if flow_rate > 0:
-            # 计算用水量对应的体积变化（假设水箱总体积不变）
-            used_water_volume = flow_rate * delta_t   # 假设流量单位为 L/h，转换为 L
-            # 注入相同体积的冷水
+            # Calculate volume change corresponding to water usage (assuming total tank volume unchanged)
+            used_water_volume = flow_rate * delta_t   # Assume flow rate unit is L/h, convert to L
+            # Inject same volume of cold water
             injected_cold_volume = used_water_volume
 
-            # 混合效应计算新温度
+            # Calculate new temperature using mixing effect
             remaining_hot_volume = params['volume'] - used_water_volume
             new_temp = (current_temp * remaining_hot_volume + temp_cold * injected_cold_volume) / params['volume']
 
-        # 情况2: 加热时的升温
+        # Case 2: Temperature rise when heating
         if power > 0:
             hour = self.state['time_index'] // 2
             efficiency = 0.9 if (6 <= hour <= 9 or 18 <= hour <= 22) else 0.8
-            # 将功率从 kW 转换为 W
+            # Convert power from kW to W
             power_in_watts = power * 1000 * efficiency
 
-            # 计算加热带来的温度上升
-            heat_input = power_in_watts * 3600 * delta_t  # 能量输入（J）
-            temp_gain = heat_input / (params['mass'] * 4180)  # 温度上升（°C）
+            # Calculate temperature rise from heating
+            heat_input = power_in_watts * 3600 * delta_t  # Energy input (J)
+            temp_gain = heat_input / (params['mass'] * 4180)  # Temperature rise (°C)
             new_temp += temp_gain
 
-        # 情况3: 无加热时的自然冷却
+        # Case 3: Natural cooling when not heating
         else:
-            # 计算自然冷却带来的温度下降   冷却系数 k
+            # Calculate temperature drop from natural cooling    Cooling coefficient k
             cooling_coefficient = params['h'] * params['surface_area'] / (params['mass'] * 4180)
             new_temp = env_temp + (new_temp - env_temp) * np.exp(-cooling_coefficient * delta_t * 3600)
 
-        # 更新参数
+        # Update parameters
         params['temp_min'] = env_temp
         new_temp = np.clip(new_temp, params['temp_min'], params['temp_max'])
 
         return new_temp, flow_rate
 
     def _fuzzy_heating_control(self, set_tem, current_tem):
-        # 模糊控制逻辑：根据目标温度与当前温度的差值决定加热功率
-        # temp_diff: 目标温度 - 当前温度
+        # Fuzzy control logic: determine heating power based on difference between target temperature and current temperature
+        # temp_diff: target temperature - current temperature
         temp_diff = set_tem - current_tem
-        hour = self.state['time_index'] // 2  # 获取当前小时
+        hour = self.state['time_index'] // 2  # Get current hour
 
-        # 动态调整控制规则（高峰期更激进）
-        if 6 <= hour <= 9 or 18 <= hour <= 22:  # 高峰期
+        # Dynamically adjust control rules (more aggressive during peak periods)
+        if 6 <= hour <= 9 or 18 <= hour <= 22:  # Peak period
             rules = [
                 {'range': (-np.inf, -3), 'power': 0.0},
                 {'range': (-3, 1), 'power': 0.0},
-                {'range': (1, 4), 'power': 0.4 + 0.1 * max(0, temp_diff-1)},  # 动态比例
+                {'range': (1, 4), 'power': 0.4 + 0.1 * max(0, temp_diff-1)},  # Dynamic proportion
                 {'range': (4, 6), 'power': 1.0},
-                {'range': (6, np.inf), 'power': 1.2}  # # 允许短时超功率
+                {'range': (6, np.inf), 'power': 1.2}  # Allow short-term over-power
             ]
-        else:  # 非高峰期
+        else:  # Off-peak period
             rules = [
                 {'range': (-np.inf, -5), 'power': 0.0},
                 {'range': (-5, 2), 'power': 0.0},
-                {'range': (2, 5), 'power': 0},  # 温和加热
-                {'range': (5, 8), 'power': 0.2},  # 原0
-                {'range': (8, np.inf), 'power': 0.5}  # 原0.5
+                {'range': (2, 5), 'power': 0},  # Gentle heating
+                {'range': (5, 8), 'power': 0.2},  # Originally 0
+                {'range': (8, np.inf), 'power': 0.5}  # Originally 0.5
             ]
 
         # rules = [
         #     {'range': (-np.inf, -3), 'power': 0.0},
         #     {'range': (-3, 1), 'power': 0.0},
-        #     {'range': (1, 4), 'power': 0.4 + 0.1 * max(0, temp_diff - 1)},  # 动态比例
+        #     {'range': (1, 4), 'power': 0.4 + 0.1 * max(0, temp_diff - 1)},  # Dynamic proportion
         #     {'range': (4, 6), 'power': 1.0},
-        #     {'range': (6, np.inf), 'power': 1.2}  # # 允许短时超功率
+        #     {'range': (6, np.inf), 'power': 1.2}  # Allow short-term over-power
         # ]
 
         for rule in rules:
             if rule['range'][0] <= temp_diff < rule['range'][1]:
-                return min(max(rule['power'], 0.0), 1.2)  # 功率钳位
-        return 0.0  # 默认不加热
+                return min(max(rule['power'], 0.0), 1.2)  # Power clamping
+        return 0.0  # Default no heating
 
     def calculate_reward(self, state, action):
-        # 定义奖励
+        # Define reward
 
-        # 1. 约束惩罚
+        # 1. Constraint penalty
         violation = 0
         # violation += max(0.1*self.ess_capacity-self.state['ess_state'],
         #                 self.state['ess_state']-0.9*self.ess_capacity, 0) ** 2 * 20
@@ -710,19 +710,19 @@ class HomeEnergyManagementEnv:
         # violation += max(0.1 * self.ev_capacity - self.state['ev_battery_state'],
         #                 self.state['ev_battery_state'] - 0.9 * self.ev_capacity, 0) ** 2 * 20
 
-        # # EV约束（最低电量）
+        # # EV constraint (minimum charge)
         if self.data_interface.is_ev_departing_soon(self.current_time, self.current_time_index):
             ev_violation = max(0, self.ev_min_charge - self.state['ev_battery_state'])
-            # violation += np.clip(ev_violation ** 2, 0, 500)  # 添加数值裁剪
+            # violation += np.clip(ev_violation ** 2, 0, 500)  # Add numerical clipping
             violation += ev_violation ** 2
 
-        # 2. 电网成本计算（半小时）
+        # 2. Grid cost calculation (half hour)
         ev_charge = max(action['ev_power'], 0)
         ev_discharge = max(-action['ev_power'], 0)
         battery_charge = max(action['battery_power'], 0)
         battery_discharge = max(-action['battery_power'], 0)
 
-        # 计算总消耗和总发电（kW）
+        # Calculate total consumption and total generation (kW)
         total_consumption = (
                 state['home_load']
                 + ev_charge
@@ -738,17 +738,17 @@ class HomeEnergyManagementEnv:
                 + ev_discharge
                 + battery_discharge
         )
-        # 计算净需求（kW）
-        net_demand = total_consumption - total_generation  # 这个需求就是与电网的交互
+        # Calculate net demand (kW)
+        net_demand = total_consumption - total_generation  # This demand is the interaction with the grid
 
-        # 转换为能量（kWh）并拆分购售电
-        purchase_kwh = max(net_demand, 0) * 0.5  # 这里计算的是理想成本而非实际成本
+        # Convert to energy (kWh) and split purchase/sale
+        purchase_kwh = max(net_demand, 0) * 0.5  # This calculates ideal cost, not actual cost
         sell_kwh = max(-net_demand, 0) * 0.5
 
-        # 计算能源成本（考虑售电价格折扣）
+        # Calculate energy cost (considering electricity sale price discount)
         energy_cost = (
                 purchase_kwh * state['electricity_price']
-                - sell_kwh * state['electricity_price'] * 0.9  # 假设售电价格是购电的0.9
+                - sell_kwh * state['electricity_price'] * 0.9  # Assume sale price is 0.9 of purchase price
         )
 
         self.total_cost += energy_cost
@@ -756,9 +756,9 @@ class HomeEnergyManagementEnv:
 
         self.current_step_cost = energy_cost
 
-        # 3. ESS与ev充放电引导奖励
+        # 3. ESS and EV charge/discharge guidance reward
 
-        # ESS奖励：鼓励低充高放
+        # ESS reward: encourage low price charging and high price discharging
         ess_reward = 0
         price = self.state['electricity_price']
         soc = self.state['ess_state'] / self.ess_capacity
@@ -770,11 +770,11 @@ class HomeEnergyManagementEnv:
         else:
             # ess_reward += -action['battery_power'] * (price - 0.5) * soc * 10
             ess_reward += -action['battery_power'] * (price - 0.5) * 20
-        # ess_reward = np.tanh(ess_reward / 10) * 3  # 使用tanh压缩幅度
+        # ess_reward = np.tanh(ess_reward / 10) * 3  # Use tanh to compress amplitude
 
-        # Ev奖励：鼓励低充高放
+        # EV reward: encourage low price charging and high price discharging
         ev_reward = 0
-        # 获取当前SOC比例
+        # Get current SOC ratio
         soc_ev = state['ev_battery_state'] / self.ev_capacity
         if price < 0.5:
             # ev_reward += -action['ev_power'] * (price - 0.5) * (1-soc_ev) * 10
@@ -784,9 +784,9 @@ class HomeEnergyManagementEnv:
         else:
             # ev_reward += -action['ev_power'] * (price - 0.5) * soc_ev * 10
             ev_reward += -action['ev_power'] * (price - 0.5) * 20
-        # ev_reward = np.tanh(ev_reward / 10) * 3  # 使用tanh压缩幅度
+        # ev_reward = np.tanh(ev_reward / 10) * 3  # Use tanh to compress amplitude
 
-        # 4. 用户不满意度惩罚
+        # 4. User dissatisfaction penalty
         user_dissatisfaction_penalty = 0
         user_dissatisfaction_penalty = (self.user_satisfaction_weight0 * self.calculate_user_dissatisfaction0() +
                                         self.user_satisfaction_weight1 * self.calculate_user_dissatisfaction1() +
@@ -794,25 +794,25 @@ class HomeEnergyManagementEnv:
         # user_dissatisfaction_penalty = np.clip(user_dissatisfaction_penalty, -20, 20)
 
         temp_reward = self.calculate_temp_reward(state['ewh_temp'])
-        # temp_reward = np.clip(temp_reward, -5, 5)  # 限制温度奖励范围
+        # temp_reward = np.clip(temp_reward, -5, 5)  # Limit temperature reward range
 
-        # 5. 组合奖励
+        # 5. Combined reward
         reward = (
                 - self.energy_weight * energy_cost
-                - self.violation_weight * violation    # EV及ESS的上下界约束
+                - self.violation_weight * violation    # EV and ESS upper and lower bound constraints
                 + self.ess_weight * ess_reward
                 + self.ev_weight * ev_reward
-                - user_dissatisfaction_penalty   # 用户不满意度惩罚
+                - user_dissatisfaction_penalty   # User dissatisfaction penalty
                 + self.temp_weight * temp_reward
         )
 
 
 
-        # # 新增探索奖励（防止早熟）
-        # if np.random.rand() < 0.1:  # 10%概率添加噪声
+        # # New exploration reward (prevent premature convergence)
+        # if np.random.rand() < 0.1:  # 10% probability add noise
         #     reward += np.random.normal(0, 5)
 
-        # 在计算奖励后添加记录
+        # Add records after calculating reward
         reward_breakdown = {
             'total': reward,
             'energy_cost': - self.energy_weight * energy_cost,
@@ -826,39 +826,39 @@ class HomeEnergyManagementEnv:
         for key in self.reward_components:
             self.reward_components[key].append(reward_breakdown[key])
 
-        #     # 添加数值稳定性检查
+        #     # Add numerical stability check
         # if not np.isfinite(reward):
-        #     reward = -10  # 对异常奖励值进行兜底处理
+        #     reward = -10  # Fallback handling for abnormal reward values
 
         return reward
 
     def calculate_user_dissatisfaction0(self):
-        """用户不满意度计算（空调）"""
+        """User dissatisfaction calculation (AC)"""
         dissatisfaction = 0
 
-        # 检查是否在舒适区间内
-        comfort_range = 2  # 舒适区间范围（例如±2℃）
+        # Check if within comfort range
+        comfort_range = 2  # Comfort range (e.g., ±2°C)
         temp_diff = self.indoor_temp2 - self.user_temp_preference2
 
         if abs(temp_diff) > comfort_range:
-            # 温度不满意度（非线性计算）
-            dissatisfaction += min((abs(temp_diff) - comfort_range) ** 1.5 * 0.5, 500)  # 指数增长但设置上限
+            # Temperature dissatisfaction (non-linear calculation)
+            dissatisfaction += min((abs(temp_diff) - comfort_range) ** 1.5 * 0.5, 500)  # Exponential growth but set upper limit
 
         return dissatisfaction
 
     def calculate_user_dissatisfaction1(self):
-        """用户不满意度计算（空调）"""
+        """User dissatisfaction calculation (AC)"""
         dissatisfaction = 0
 
-        # 检查是否在舒适区间内
-        comfort_range = 2  # 舒适区间范围（例如±2℃）
+        # Check if within comfort range
+        comfort_range = 2  # Comfort range (e.g., ±2°C)
         temp_diff = self.indoor_temp - self.user_temp_preference
 
         if abs(temp_diff) > comfort_range:
-            # 温度不满意度（非线性计算）
-            dissatisfaction += min((abs(temp_diff) - comfort_range) ** 1.5 * 0.5, 500)  # 指数增长但设置上限
+            # Temperature dissatisfaction (non-linear calculation)
+            dissatisfaction += min((abs(temp_diff) - comfort_range) ** 1.5 * 0.5, 500)  # Exponential growth but set upper limit
 
-        # # 空调频繁启停惩罚
+        # # AC frequent on/off penalty
         # if len(self.air_conditioner_power_record) > 2:
         #     recent_changes = sum(
         #         abs(a - b) for a, b in zip(
@@ -871,7 +871,7 @@ class HomeEnergyManagementEnv:
         return dissatisfaction
 
     def calculate_user_dissatisfaction2(self, state, action):
-        """改进的洗衣机相关惩罚计算"""
+        """Improved washing machine related penalty calculation"""
         if action['wash_machine_schedule'] >= 1:
             price = self.data_interface.get_electricity_price(self.current_time,
                                                           self.current_time_index+2*(action['wash_machine_schedule']-1))
@@ -880,33 +880,33 @@ class HomeEnergyManagementEnv:
             price = state['electricity_price']
             price_penalty = 0
 
-        # 时间偏移惩罚（非线性）
+        # Time offset penalty (non-linear)
         time_penalty = 5 * self.time_deviation   #
 
         return time_penalty + price_penalty
 
     def calculate_temp_reward(self, current_temp):
-        # 强化分时控制参数
+        # Strengthen time-of-use control parameters
         hour = self.state['time_index'] // 2
-        if 6 <= hour <= 9 or 18 <= hour <= 22:  # 用水高峰时段
+        if 6 <= hour <= 9 or 18 <= hour <= 22:  # Peak water usage hours
             target, low, high = 55, 53, 57
-            strict_factor = 5.0  # 强化高峰时段惩罚
+            strict_factor = 5.0  # Strengthen peak period penalty
         else:
             target, low, high = 45, 43, 47
             strict_factor = 1.0
 
-        # 动态偏差计算
+        # Dynamic deviation calculation
         temp_diff = current_temp - target
         abs_diff = abs(temp_diff)
 
-        # # 阶梯式奖励机制
+        # # Step-wise reward mechanism
         if low <= current_temp <= high:
-            # 核心区奖励 (S型曲线)
-            reward = 5.0 / (1 + np.exp(abs_diff * 0.8))  # 中心最高，边缘平滑下降
+            # Core region reward (S-shaped curve)
+            reward = 5.0 / (1 + np.exp(abs_diff * 0.8))  # Highest at center, smooth decline at edges
         else:
-            # 危险区惩罚（指数增长）
+            # Danger zone penalty (exponential growth)
             deviation = max(low - current_temp, current_temp - high)
-            reward = -strict_factor * deviation   # 严惩越界
+            reward = -strict_factor * deviation   # Strictly penalize boundary violations
         return reward
 
     def is_terminal_state(self):
@@ -923,24 +923,24 @@ class HomeEnergyManagementEnv:
         return self.data_interface.is_ev_at_home(self.current_time, self.current_time_index)
 
     def update_ev_state_after_trip(self, current_ev_soc):
-        #  生成日行驶里程（对数正态分布）
-        avg_daily_km = 50  # 平均日行驶里程（单位：公里）
-        km_std = 0.2  # 日行驶里程的标准差
+        # Generate daily mileage (log-normal distribution)
+        avg_daily_km = 50  # Average daily mileage (unit: km)
+        km_std = 0.2  # Standard deviation of daily mileage
         daily_km = np.random.lognormal(mean=np.log(avg_daily_km), sigma=km_std)
 
-        # 假设每公里耗电量为0.2 kWh
+        # Assume energy consumption per km is 0.2 kWh
         energy_consumption_per_km = 0.2  # kWh/km
 
-        # 计算到家时的电量状态
+        # Calculate charge state when arriving home
         soc_home = current_ev_soc - daily_km * energy_consumption_per_km
 
-        # 确保电量状态在合理范围内（0-100%）
+        # Ensure charge state is within reasonable range (0-100%)
         soc_home = np.clip(soc_home, 0, 100)
 
         return soc_home
 
     def _find_contiguous_segments(self, bool_list):
-        """检测连续为True的时间段"""
+        """Detect contiguous time periods where value is True"""
         segments = []
         start_idx = None
         for i, value in enumerate(bool_list):
@@ -949,97 +949,97 @@ class HomeEnergyManagementEnv:
             elif not value and start_idx is not None:
                 segments.append((start_idx, i - 1))
                 start_idx = None
-        if start_idx is not None:  # 处理最后一段
+        if start_idx is not None:  # Handle last segment
             segments.append((start_idx, len(bool_list) - 1))
         return segments
 
     def reward_shape(self, progress):
         """
-        根据训练进度动态调整奖励函数的系数
-        :param progress: 训练进度，范围从0到1
-        :return: 各个奖励项的权重
+        Dynamically adjust reward function coefficients based on training progress
+        :param progress: Training progress, range from 0 to 1
+        :return: Weights for each reward component
         """
 
-        # self.energy_weight = 5.0 * (1 - 0.8*progress)  # 线性衰减
-        # self.temp_weight = 1 / (1 + np.exp(-10*(progress-0.3)))  # S型增长
-        self.violation_weight = 3-2*progress  # 4月29号尝试下这个方法，无效后尝试保存模型快照
+        # self.energy_weight = 5.0 * (1 - 0.8*progress)  # Linear decay
+        # self.temp_weight = 1 / (1 + np.exp(-10*(progress-0.3)))  # S-shaped growth
+        self.violation_weight = 3-2*progress  # April 29 attempt this method, try saving model snapshots if ineffective
         # self.user_satisfaction_weight1 = 0.3 + 0.7*progress
         # self.user_satisfaction_weight2 = 0.1 + 0.4*progress
         # self.ess_weight = 3.0 + 2*progress
         # self.ev_weight = 1
 
     def save_cost_data(self):
-        """保存成本数据到CSV文件"""
-        # 创建结果目录
+        """Save cost data to CSV file"""
+        # Create results directory
         results_dir = "model/cost_results"
         os.makedirs(results_dir, exist_ok=True)
 
-        # 创建唯一的文件名（包含时间戳）
+        # Create unique filename (include timestamp)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         csv_filename = os.path.join(results_dir, f"cost_data_{timestamp}.csv")
 
-        # 写入数据到CSV文件
+        # Write data to CSV file
         with open(csv_filename, mode='w', newline='') as file:
             writer = csv.writer(file)
-            # 写入标题行
+            # Write header row
             writer.writerow(["Timestamp", "Energy Cost"])
 
-            # 写入每个时间步的成本数据
+            # Write cost data for each time step
             for i, (ts, cost) in enumerate(zip(self.records['timestamps'], self.records['energy_cost'])):
                 writer.writerow([ts.strftime('%Y-%m-%d %H:%M:%S'), cost])
 
-        print(f"成本数据已保存到: {csv_filename}")
+        print(f"Cost data saved to: {csv_filename}")
 
     def save_episode_costs(self):
-        """保存每个episode的总成本到CSV文件"""
-        # 创建结果目录
+        """Save total cost for each episode to CSV file"""
+        # Create results directory
         results_dir = "model/episode_cost_results"
         os.makedirs(results_dir, exist_ok=True)
 
-        # 创建唯一的文件名（包含时间戳）
+        # Create unique filename (include timestamp)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = os.path.join(results_dir, f"episode_costs_{timestamp}.csv")
 
         with open(filename, mode='w', newline='') as file:
             writer = csv.writer(file)
-            # 写入标题行
+            # Write header row
             writer.writerow(["Episode", "Total Cost"])
 
-            # 写入每个episode的成本数据
+            # Write cost data for each episode
             for episode, cost in enumerate(self.episode_costs):
                 writer.writerow([episode + 1, cost])
 
-        print(f"Episode成本数据已保存到: {filename}")
+        print(f"Episode cost data saved to: {filename}")
 
     def visualize(self):
-        # ===== 第一个画布：EV的SOC变化图与电价图 =====
+        # ===== First canvas: EV SOC change plot and electricity price plot =====
         plt.figure(figsize=(20, 5))
 
         ax1 = plt.subplot(1, 1, 1)
         ev_soc = np.array(self.ev_battery_record, dtype=np.float32)
-        ev_soc[~np.array(self.ev_at_home_record)] = np.nan  # 离家时段设为NaN
+        ev_soc[~np.array(self.ev_at_home_record)] = np.nan  # Set away periods to NaN
 
         mpl_dates = mdates.date2num(self.records['timestamps'])
 
-        # 绘制EV SOC曲线
+        # Plot EV SOC curve
         ax1.plot(mpl_dates, ev_soc, color='blue', label='EV SOC')
         ax1.set_ylabel('EV SOC (kWh)')
         ax1.set_title('EV State of Charge and Electricity Price')
         ax1.legend(loc='upper left')
 
-        # 绘制电价曲线（右轴）
+        # Plot electricity price curve (right axis)
         ax1_price = ax1.twinx()
         ax1_price.step(mpl_dates, self.electricity_price_record, color='red', label='Electricity Price', where='post')
         ax1_price.set_ylabel('Price ($/kWh)')
         ax1_price.legend(loc='upper right')
 
-        # 分段绘制在家时间段的填充区域
+        # Segmentally plot filled areas for at-home time periods
         home_segments = self._find_contiguous_segments(self.ev_at_home_record)
         for start, end in home_segments:
             segment_dates = mdates.date2num(self.records['timestamps'][start:end + 1])
             ax1.fill_between(segment_dates, 0, 1, color='green', alpha=0.3, transform=ax1.get_xaxis_transform())
 
-        # 设置时间轴格式
+        # Set time axis format
         ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax1.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
@@ -1048,14 +1048,14 @@ class HomeEnergyManagementEnv:
         plt.savefig('figures/environment_plots/p3.png')
         plt.close()
 
-        # ===== 第二个画布：ESS充放电功率、光伏发电与电价变化图 =====
+        # ===== Second canvas: ESS charge/discharge power, PV generation and electricity price change plot =====
         plt.figure(figsize=(20, 10))
 
-        # 确保两个子图的横坐标范围一致
+        # Ensure horizontal coordinate ranges are consistent for both subplots
         min_date = mpl_dates[0]
         max_date = mpl_dates[-1]
 
-        # ESS充放电功率图
+        # ESS charge/discharge power plot
         ax2_1 = plt.subplot(2, 1, 1)
         if len(self.ess_actions) != len(mpl_dates):
             print(
@@ -1069,47 +1069,47 @@ class HomeEnergyManagementEnv:
         ess_charge_power = [max(power, 0) for power in ess_actions]
         ess_discharge_power = [min(power, 0) for power in ess_actions]
 
-        # 绘制ESS充放电柱状图，调整柱体宽度
+        # Plot ESS charge/discharge bar chart, adjust bar width
         ax2_1.bar(mpl_dates, ess_charge_power, width=0.015, color='#05B9E2',
-                  label='ESS Charging Power')  # 充电颜色更深，柱体宽度调整
+                  label='ESS Charging Power')  # Charging color darker, bar width adjusted
         ax2_1.bar(mpl_dates, ess_discharge_power, width=0.015, color='#FFBE7A', label='ESS Discharging Power')
 
-        # 在0刻度线绘制横线
+        # Draw horizontal line at 0 scale
         ax2_1.axhline(0, color='black', linewidth=0.8, linestyle='--')
 
-        # 设置左轴范围
+        # Set left axis range
         ax2_1.set_ylim(-5, 5)
 
         ax2_1.set_ylabel('Power (kW)')
         ax2_1.set_title('ESS Charging/Discharging Power, PV Generation and Electricity Price')
         ax2_1.legend(loc='upper left')
 
-        # 设置时间轴格式和范围
+        # Set time axis format and range
         ax2_1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax2_1.xaxis.set_major_locator(mdates.HourLocator(interval=12))
         ax2_1.set_xlim(min_date, max_date)
 
-        # 光伏发电功率图（右轴）
+        # PV generation power plot (right axis)
         ax2_1_pv = ax2_1.twinx()
-        # 绘制带点的曲线
+        # Plot curve with points
         ax2_1_pv.plot(mpl_dates, self.pv_generation_record, color='green', marker='o', linestyle='-',
                       label='PV Generation')
         ax2_1_pv.set_ylabel('PV Generation (kW)')
         ax2_1_pv.legend(loc='upper right')
 
-        # 确保光伏发电曲线在0刻度线上方
-        ax2_1_pv.set_ylim(-1, 1)  # 右轴范围从-2到2，光伏发电显示在0上方
+        # Ensure PV generation curve is above 0 scale
+        ax2_1_pv.set_ylim(-1, 1)  # Right axis range from -2 to 2, PV generation displayed above 0
 
-        # 电价图（右轴右侧）
+        # Electricity price plot (right axis right side)
         ax2_1_price = ax2_1.twinx()
-        ax2_1_price.spines['right'].set_position(('outward', 60))  # 将电价轴向外移动
+        ax2_1_price.spines['right'].set_position(('outward', 60))  # Move price axis outward
         ax2_1_price.step(mpl_dates, self.electricity_price_record, color='red', label='Electricity Price', where='post')
         ax2_1_price.set_ylabel('Price ($/kWh)')
         ax2_1_price.legend(loc='lower right')
 
-        # ESS SOC变化图
+        # ESS SOC change plot
         ax2_2 = plt.subplot(2, 1, 2)
-        time_interval = 0.5 / 24  # 30分钟间隔
+        time_interval = 0.5 / 24  # 30-minute interval
         bar_width = 0.8 * time_interval
 
         bars = ax2_2.bar(
@@ -1124,7 +1124,7 @@ class HomeEnergyManagementEnv:
 
         ax2_2.set_xlim(min_date, max_date)
 
-        # 设置时间轴格式
+        # Set time axis format
         ax2_2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax2_2.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
@@ -1139,12 +1139,12 @@ class HomeEnergyManagementEnv:
         plt.savefig('figures/environment_plots/p4.png')
         plt.close()
 
-        # ===== 第三个画布：空调功率变化图和温度变化图 =====
+        # ===== Third canvas: AC power change plot and temperature change plot =====
         plt.figure(figsize=(20, 10))
 
-        # 空调功率与电价图
+        # AC power and electricity price plot
         ax3_1 = plt.subplot(2, 1, 1)
-        # 使用step函数绘制空调功率变化
+        # Use step function to plot AC power changes
         ax3_1.step(mpl_dates, self.air_conditioner_power_record, color='#B2DBB9', label='AC Power', where='post')
         ax3_1.set_ylabel('AC Power (kW)')
         ax3_1.set_title('AC Power and Electricity Price')
@@ -1155,16 +1155,16 @@ class HomeEnergyManagementEnv:
         ax3_1_price.set_ylabel('Price ($/kWh)')
         ax3_1_price.legend(loc='upper right')
 
-        # 设置时间轴格式
+        # Set time axis format
         ax3_1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax3_1.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
-        # 温度变化图
+        # Temperature change plot
         ax3_2 = plt.subplot(2, 1, 2)
         ax3_2.plot(mpl_dates, self.records['indoor_temp'], color='limegreen', label='Indoor Temperature')
         ax3_2.plot(mpl_dates, self.records['outdoor_temp'], color='deepskyblue', label='Outdoor Temperature')
 
-        # 添加适宜温度范围的横线和填充区域
+        # Add horizontal lines and filled areas for comfortable temperature range
         ax3_2.axhline(20, color='blue', linestyle='--', alpha=0.5, label='Comfort Zone Lower')
         ax3_2.axhline(24, color='blue', linestyle='--', alpha=0.5, label='Comfort Zone Upper')
         ax3_2.fill_between(mpl_dates, 20, 24, color='lightblue', alpha=0.3)
@@ -1173,7 +1173,7 @@ class HomeEnergyManagementEnv:
         ax3_2.set_title('Indoor and Outdoor Temperature Trends')
         ax3_2.legend(loc='upper left')
 
-        # 设置时间轴格式
+        # Set time axis format
         ax3_2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax3_2.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
@@ -1182,12 +1182,12 @@ class HomeEnergyManagementEnv:
         plt.savefig('figures/environment_plots/p5.png')
         plt.close()
 
-        # ===== 第四个画布：第二台空调功率变化图和温度变化图 =====
+        # ===== Fourth canvas: Second AC power change plot and temperature change plot =====
         plt.figure(figsize=(20, 10))
 
-        # 空调功率与电价图
+        # AC power and electricity price plot
         ax4_1 = plt.subplot(2, 1, 1)
-        # 使用step函数绘制空调功率变化
+        # Use step function to plot AC power changes
         ax4_1.step(mpl_dates, self.air_conditioner_power_record2, color='#B2DBB9', label='AC Power', where='post')
         ax4_1.set_ylabel('AC Power (kW)')
         ax4_1.set_title('AC Power and Electricity Price')
@@ -1198,16 +1198,16 @@ class HomeEnergyManagementEnv:
         ax4_1_price.set_ylabel('Price ($/kWh)')
         ax4_1_price.legend(loc='upper right')
 
-        # 设置时间轴格式
+        # Set time axis format
         ax4_1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax4_1.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
-        # 温度变化图
+        # Temperature change plot
         ax4_2 = plt.subplot(2, 1, 2)
         ax4_2.plot(mpl_dates, self.records['indoor_temp2'], color='limegreen', label='Indoor Temperature')
         ax4_2.plot(mpl_dates, self.records['outdoor_temp'], color='deepskyblue', label='Outdoor Temperature')
 
-        # 添加适宜温度范围的横线和填充区域
+        # Add horizontal lines and filled areas for comfortable temperature range
         ax4_2.axhline(16, color='blue', linestyle='--', alpha=0.5, label='Comfort Zone Lower')
         ax4_2.axhline(20, color='blue', linestyle='--', alpha=0.5, label='Comfort Zone Upper')
         ax4_2.fill_between(mpl_dates, 16, 20, color='lightblue', alpha=0.3)
@@ -1216,7 +1216,7 @@ class HomeEnergyManagementEnv:
         ax4_2.set_title('Indoor and Outdoor Temperature Trends')
         ax4_2.legend(loc='upper left')
 
-        # 设置时间轴格式
+        # Set time axis format
         ax4_2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax4_2.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
@@ -1225,17 +1225,17 @@ class HomeEnergyManagementEnv:
         plt.savefig('figures/environment_plots/p6.png')
         plt.close()
 
-        # ===== 第五个画布：洗衣机状态图 =====
+        # ===== Fifth canvas: Washing machine state plot =====
         plt.figure(figsize=(20, 5))
 
         ax5 = plt.subplot(1, 1, 1)
-        mpl_dates = mdates.date2num(self.records['timestamps'])  # 转换时间戳为matplotlib格式
+        mpl_dates = mdates.date2num(self.records['timestamps'])  # Convert timestamps to matplotlib format
 
-        # 绘制洗衣机状态，将柱状图向左对齐时间戳的起点
-        time_interval = 0.5 / 24  # 30分钟转换为天数
-        bar_width = time_interval  # 设置柱状图宽度与时间间隔一致
+        # Plot washing machine state, align bar chart left to timestamp start point
+        time_interval = 0.5 / 24  # 30 minutes converted to days
+        bar_width = time_interval  # Set bar width consistent with time interval
 
-        # 调整柱状图的位置，使其左侧边与时间戳对齐
+        # Adjust bar chart position so left edge aligns with timestamp
         bar_left_edges = mpl_dates
 
         ax5.bar(bar_left_edges, self.wash_machine_record, width=bar_width, color='#F0A19A',
@@ -1245,35 +1245,35 @@ class HomeEnergyManagementEnv:
         ax5.legend(loc='upper left')
 
         ax5_price = ax5.twinx()
-        # 使用step函数绘制阶梯状电价曲线
+        # Use step function to plot step-like electricity price curve
         ax5_price.step(mpl_dates, self.electricity_price_record, color='red', label='Electricity Price', where='post')
         ax5_price.set_ylabel('Price ($/kWh)')
         ax5_price.legend(loc='upper right')
 
-        # 设置时间轴格式
+        # Set time axis format
         ax5.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax5.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
-        # 获取记录的日期范围
+        # Get recorded date range
         start_date = self.records['timestamps'][0]
         end_date = self.records['timestamps'][-1]
 
-        # 遍历每一天
+        # Iterate through each day
         current_date = start_date
         while current_date <= end_date:
-            # 计算当天的偏好时段
+            # Calculate preferred time period for the day
             preferred_start = current_date.replace(hour=self.wash_machine_preferred_time[0], minute=0)
             preferred_end = current_date.replace(hour=self.wash_machine_preferred_time[1], minute=0)
 
-            # 添加垂直的阴影区域和虚线
-            ax5.axvspan(preferred_start, preferred_end, facecolor='#5A9BD5', alpha=0.1)  # 淡蓝色填充
-            ax5.axvline(preferred_start, color='#5A9BD5', linestyle='--', linewidth=1)  # 虚线
+            # Add vertical shaded regions and dashed lines
+            ax5.axvspan(preferred_start, preferred_end, facecolor='#5A9BD5', alpha=0.1)  # Light blue fill
+            ax5.axvline(preferred_start, color='#5A9BD5', linestyle='--', linewidth=1)  # Dashed line
             ax5.axvline(preferred_end, color='#5A9BD5', linestyle='--', linewidth=1)
 
-            # 进入下一天
+            # Move to next day
             current_date += timedelta(days=1)
 
-        # 设置时间轴范围为记录的时间戳范围
+        # Set time axis range to recorded timestamp range
         ax5.set_xlim(mpl_dates[0], mpl_dates[-1])
 
         plt.tight_layout()
@@ -1282,14 +1282,14 @@ class HomeEnergyManagementEnv:
         plt.close()
 
 
-        # ===== 第六个画布：热水器状态 =====
+        # ===== Sixth canvas: Water heater status =====
         plt.figure(figsize=(20, 10))
         mpl_dates = mdates.date2num(self.records['timestamps'])
 
-        # 创建一个 2 行 1 列的网格布局
+        # Create a 2 row 1 column grid layout
         gs = gridspec.GridSpec(2, 1, height_ratios=[1, 1])
 
-        # 双轴显示功率和用水量（上面的子图）
+        # Dual axis display power and water usage (top subplot)
         ax6_2 = plt.subplot(gs[0])
         ax6_2.bar(mpl_dates, self.ewh_power_record,
                   width=0.015, color='#1F77B4', label='Power')
@@ -1302,7 +1302,7 @@ class HomeEnergyManagementEnv:
         ax6_2_flow.set_ylabel('Flow Rate (L/h)', color='#2CA02C')
         ax6_2_flow.tick_params(axis='y', labelcolor='#2CA02C')
 
-        # 水温曲线（下面的子图）
+        # Water temperature curve (bottom subplot)
         ax6_1 = plt.subplot(gs[1])
         ax6_1.plot(mpl_dates, self.ewh_temp_record,
                    color='#FF7F0E', label='Water Temperature')
@@ -1310,66 +1310,66 @@ class HomeEnergyManagementEnv:
         ax6_1.set_ylabel('Temperature (°C)')
         ax6_1.set_title('Water Heater Status')
 
-        # 添加两个适宜温度范围的填充区域
-        # 高峰时段 53-57℃ (6-9点和18-22点)
+        # Add two comfortable temperature range filled areas
+        # Peak period 53-57°C (6-9 AM and 6-10 PM)
         peak_low = 50
         peak_high = 60
         non_peak_low = 40
         non_peak_high = 50
 
-        # 创建一个统一的温度范围用于填充
+        # Create a unified temperature range for filling
         all_low = [peak_low if (6 <= ts.hour <= 9 or 18 <= ts.hour <= 22) else non_peak_low for ts in
                    self.records['timestamps']]
         all_high = [peak_high if (6 <= ts.hour <= 9 or 18 <= ts.hour <= 22) else non_peak_high for ts in
                     self.records['timestamps']]
 
-        # 绘制统一的填充区域
+        # Plot unified filled area
         ax6_1.fill_between(mpl_dates, all_low, all_high,
                            color='lightgreen', alpha=0.3, label='Comfort Zone')
 
-        # 绘制高峰时段的特殊标记
+        # Plot special markers for peak periods
         peak_mask = [(6 <= ts.hour <= 9) or (18 <= ts.hour <= 22) for ts in self.records['timestamps']]
         ax6_1.fill_between(mpl_dates, peak_low, peak_high,
                            where=peak_mask, color='lightcoral', alpha=0.3, label='Peak Comfort Zone')
 
-        # 统一时间轴格式
+        # Unify time axis format
         for ax in [ax6_1, ax6_2]:
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
             ax.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
-        # 添加图例
+        # Add legend
         ax6_1.legend()
         plt.tight_layout()
         # plt.show()
         plt.savefig('figures/environment_plots/p8.png')
         plt.close()
 
-        # ===== 第七个画布：家庭总负载变化图 =====
+        # ===== Seventh canvas: Household total load change plot =====
         plt.figure(figsize=(20, 5))
         ax7 = plt.subplot(1, 1, 1)
-        mpl_dates = mdates.date2num(self.records['timestamps'])  # 转换时间戳为matplotlib格式
+        mpl_dates = mdates.date2num(self.records['timestamps'])  # Convert timestamps to matplotlib format
 
-        # 绘制家庭总负载曲线
+        # Plot household total load curve
         ax7.plot(mpl_dates, self.records['total_load'], color='purple', label='Total Load')
         ax7.set_ylabel('Load (kW)')
         ax7.set_title('Household Total Load Over Time')
         ax7.legend(loc='upper left')
 
-        # 设置时间轴格式
+        # Set time axis format
         ax7.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax7.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
-        # 获取当前图的y轴范围
+        # Get current plot y-axis range
         ymin, ymax = ax7.get_ylim()
 
-        # 设置网格
+        # Set grid
         ax7.grid(alpha=0.3)
 
-        # 填充红色区域（上半部分）
+        # Fill red area (upper part)
         ax7.fill_between(mpl_dates, self.records['total_load'], 0, where=(np.array(self.records['total_load']) > 0),
                          color='red', alpha=0.3)
 
-        # 填充绿色区域（下半部分）
+        # Fill green area (lower part)
         ax7.fill_between(mpl_dates, self.records['total_load'], 0, where=(np.array(self.records['total_load']) < 0),
                          color='green', alpha=0.3)
 
@@ -1378,19 +1378,19 @@ class HomeEnergyManagementEnv:
         plt.savefig('figures/environment_plots/p9.png')
         plt.close()
 
-        # ===== 第8个画布：成本随时间变化的图 =====
+        # ===== Eighth canvas: Cost over time plot =====
         plt.figure(figsize=(20, 5))
 
         ax8 = plt.subplot(1, 1, 1)
         mpl_dates = mdates.date2num(self.records['timestamps'])
 
-        # 绘制成本曲线
+        # Plot cost curve
         ax8.plot(mpl_dates, self.records['energy_cost'], color='purple', label='Energy Cost')
         ax8.set_ylabel('Cost ($)')
         ax8.set_title('Energy Cost Over Time')
         ax8.legend(loc='upper left')
 
-        # 设置时间轴格式
+        # Set time axis format
         ax8.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax8.xaxis.set_major_locator(mdates.HourLocator(interval=12))
 
@@ -1398,14 +1398,14 @@ class HomeEnergyManagementEnv:
         plt.savefig('figures/environment_plots/p10.png')
         plt.close()
 
-        # 新增：保存成本数据到文件
+        # New: save cost data to file
         # self.save_cost_data()
 
     def plot_reward_components(self):
         plt.figure(figsize=(20, 8))
         mpl_dates = mdates.date2num(self.records['timestamps'])
 
-        # 创建颜色映射
+        # Create color mapping
         colors = {
             'energy_cost': '#FF6B6B',
             'violation_penalty': '#4ECDC4',
@@ -1416,11 +1416,11 @@ class HomeEnergyManagementEnv:
             # 'sell': '#925EBO'
         }
 
-        # 绘制堆叠区域图
+        # Plot stacked area chart
         components = ['energy_cost', 'violation_penalty', 'ess_reward',
                       'ev_reward', 'user_penalty', 'temp_reward']
 
-        # 累积值用于堆叠
+        # Cumulative values for stacking
         cumulative = np.zeros(len(mpl_dates))
 
         for comp in components:
@@ -1430,11 +1430,11 @@ class HomeEnergyManagementEnv:
                              color=colors[comp], alpha=0.8)
             cumulative += values
 
-        # 绘制总奖励线
+        # Plot total reward line
         plt.plot(mpl_dates, self.reward_components['total'],
                  color='#2C3E50', linewidth=2, label='Total Reward')
 
-        # 格式设置
+        # Format settings
         ax = plt.gca()
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         ax.xaxis.set_major_locator(mdates.HourLocator(interval=12))
@@ -1451,16 +1451,16 @@ class HomeEnergyManagementEnv:
         # plt.show()
 
     def save_simulation_data(self, filename=None):
-        """保存模拟数据到CSV文件，用于后续绘图分析"""
+        """Save simulation data to CSV file for subsequent plotting and analysis"""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"simulation_data_{timestamp}.csv"
         
-        # 确保数据目录存在
+        # Ensure data directory exists
         os.makedirs('simulation_data', exist_ok=True)
         filepath = os.path.join('simulation_data', filename)
         
-        # 准备数据字典
+        # Prepare data dictionary
         data_dict = {
             'timestamp': self.records['timestamps'],
             'ev_soc': self.ev_battery_record,
@@ -1491,27 +1491,27 @@ class HomeEnergyManagementEnv:
             'daily_costs': self.records['daily_costs']
         }
         
-        # 处理长度不匹配的问题
+        # Handle length mismatch issues
         max_length = max(len(v) for v in data_dict.values() if isinstance(v, list))
         
-        # 确保所有列表长度一致
+        # Ensure all lists have consistent length
         for key, value in data_dict.items():
             if isinstance(value, list):
                 if len(value) < max_length:
-                    # 用最后一个值填充
+                    # Fill with last value
                     data_dict[key] = value + [value[-1]] * (max_length - len(value))
                 elif len(value) > max_length:
-                    # 截断到最大长度
+                    # Truncate to maximum length
                     data_dict[key] = value[:max_length]
         
-        # 创建DataFrame
+        # Create DataFrame
         df = pd.DataFrame(data_dict)
         
-        # 保存到CSV
+        # Save to CSV
         df.to_csv(filepath, index=False, encoding='utf-8-sig')
-        print(f"模拟数据已保存到: {filepath}")
+        print(f"Simulation data saved to: {filepath}")
         
-        # 同时保存奖励组件数据
+        # Also save reward component data
         reward_filename = filename.replace('.csv', '_rewards.csv')
         reward_filepath = os.path.join('simulation_data', reward_filename)
         
@@ -1525,7 +1525,7 @@ class HomeEnergyManagementEnv:
         
         reward_df = pd.DataFrame(reward_data)
         reward_df.to_csv(reward_filepath, index=False, encoding='utf-8-sig')
-        print(f"奖励组件数据已保存到: {reward_filepath}")
+        print(f"Reward component data saved to: {reward_filepath}")
         
         return filepath
 

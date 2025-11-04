@@ -1,7 +1,7 @@
 """
-Rainbow DQN多分支解决方案，适配HEMS环境
-结合了Double DQN、Dueling Networks、Prioritized Experience Replay、
-Multi-step Learning、Distributional RL和Noisy Networks等改进技术
+Rainbow DQN multi-branch solution, adapted for HEMS environment
+Combines Double DQN, Dueling Networks, Prioritized Experience Replay,
+Multi-step Learning, Distributional RL, and Noisy Networks improvements
 """
 import os
 import sys
@@ -15,19 +15,19 @@ import torch.nn.functional as F
 from collections import deque
 import math
 
-# 添加项目根目录到Python路径（使用相对路径）
+# Add project root directory to Python path (using relative path)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 
 from environment import HomeEnergyManagementEnv
-# 添加evaluation目录到路径
+# Add evaluation directory to path
 sys.path.append(os.path.join(project_root, 'evaluation'))
 from plt import plot_returns
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ==================== 状态归一化 ====================
+# ==================== State Normalization ====================
 class RunningStats:
     def __init__(self, shape):
         self.mean = torch.zeros(shape, device=device)
@@ -116,7 +116,7 @@ class DuelingQBranch(nn.Module):
             nn.Linear(hidden_dim // 2, action_dim)
         )
         
-        # 正交初始化
+        # Orthogonal initialization
         for layer in self.feature_layer.modules():
             if isinstance(layer, nn.Linear):
                 nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))
@@ -170,14 +170,14 @@ class PrioritizedReplayBuffer:
         else:
             priorities = np.array(self.priorities[:self.position])
         
-        # 计算采样概率
+        # Calculate sampling probabilities
         priorities_alpha = priorities ** self.alpha
         probabilities = priorities_alpha / priorities_alpha.sum()
         
-        # 采样索引
+        # Sample indices
         indices = np.random.choice(len(self.buffer), batch_size, p=probabilities)
         
-        # 计算重要性采样权重
+        # Calculate importance sampling weights
         weights = (len(self.buffer) * probabilities[indices]) ** (-self.beta)
         weights /= weights.max()
         self.beta = min(1.0, self.beta + self.beta_increment)
@@ -200,7 +200,7 @@ class SharedFeatureExtractor(nn.Module):
             nn.Linear(state_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(0.1),  # 添加dropout
+            nn.Dropout(0.1),  # Add dropout
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.ReLU(),
@@ -213,7 +213,7 @@ class SharedFeatureExtractor(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-# ==================== Rainbow DQN智能体 ====================
+# ==================== Rainbow DQN Agent ====================
 class RainbowDQN:
     def __init__(self, state_dim, hidden_dim, action_space_config, lr=1e-4, gamma=0.96, tau=0.01, 
                  buffer_size=100000, batch_size=512, epsilon_start=1.0, epsilon_end=0.05, epsilon_decay=0.995,
@@ -232,16 +232,16 @@ class RainbowDQN:
         self.alpha = alpha
         self.beta = beta
         
-        # 使用Noisy Networks替代epsilon-greedy
-        self.epsilon = 0.0  # 不再使用epsilon-greedy
+        # Use Noisy Networks instead of epsilon-greedy
+        self.epsilon = 0.0  # No longer use epsilon-greedy
         
-        # 优先经验回放
+        # Prioritized experience replay
         self.memory = PrioritizedReplayBuffer(buffer_size, alpha, beta)
         
         # N-step buffer
         self.n_step_buffer = deque(maxlen=n_step)
         
-        # Q网络和目标网络
+        # Q network and target network
         self.shared_backbone = SharedFeatureExtractor(state_dim, hidden_dim).to(device)
         self.q_branches = nn.ModuleDict({
             name: DuelingQBranch(hidden_dim, dim).to(device)
@@ -253,16 +253,16 @@ class RainbowDQN:
             for name, dim in self.action_dims.items()
         })
         
-        # 初始化目标网络
+        # Initialize target network
         self.update_target_network(1.0)
         
-        # 优化器
+        # Optimizer
         self.optimizer = torch.optim.Adam(
             list(self.shared_backbone.parameters()) + list(self.q_branches.parameters()), 
             lr=lr, weight_decay=1e-5
         )
         
-        # 学习率调度器
+        # Learning rate scheduler
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.9)
     
     def select_action(self, state_tensor, action_mask=None, explore=True):
@@ -281,24 +281,24 @@ class RainbowDQN:
         return actions
     
     def store(self, *transition):
-        # 存储到N-step buffer
+        # Store to N-step buffer
         self.n_step_buffer.append(transition)
         
-        # 如果buffer满了，计算N-step return
+        # If buffer is full, calculate N-step return
         if len(self.n_step_buffer) == self.n_step:
             n_step_transition = self._compute_n_step_return()
             self.memory.push(*n_step_transition)
     
     def _compute_n_step_return(self):
-        # 计算N-step return
+        # Calculate N-step return
         states, actions, rewards, next_states, dones = zip(*self.n_step_buffer)
         
-        # 计算累积奖励
+        # Calculate cumulative reward
         cumulative_reward = 0
         for i in range(self.n_step):
             cumulative_reward += rewards[i] * (self.gamma ** i)
         
-        # 最后一个状态和done标志
+        # Last state and done flag
         final_state = next_states[-1]
         final_done = dones[-1]
         
@@ -323,13 +323,13 @@ class RainbowDQN:
         
         total_loss = 0.0
         
-        # 获取当前Q值
+        # Get current Q values
         current_features = self.shared_backbone(states)
         next_features = self.shared_backbone(next_states)
         target_next_features = self.target_shared_backbone(next_states)
         
         for name, branch in self.q_branches.items():
-            # 获取动作索引
+            # Get action index
             action_indices = []
             action_values = list(self.action_mapping[name].values())
             for val in [a[name] for a in actions]:
@@ -342,24 +342,24 @@ class RainbowDQN:
             
             action_indices = torch.tensor(action_indices, dtype=torch.long, device=device)
             
-            # 当前Q值
+            # Current Q value
             current_q = branch(current_features).gather(1, action_indices.unsqueeze(1)).squeeze()
             
-            # Double DQN: 使用主网络选择动作，目标网络评估动作
+            # Double DQN: use main network to select action, target network to evaluate action
             with torch.no_grad():
-                # 使用主网络选择下一个动作
+                # Use main network to select next action
                 next_q_values = branch(next_features)
                 next_actions = next_q_values.argmax(1)
                 
-                # 使用目标网络评估选定的动作
+                # Use target network to evaluate selected action
                 target_q_values = self.target_q_branches[name](target_next_features)
                 target_q = target_q_values.gather(1, next_actions.unsqueeze(1)).squeeze()
                 
-                # 计算目标Q值
+                # Calculate target Q value
                 target_q = rewards + (self.gamma ** self.n_step) * target_q * (1 - dones)
             
-            # 计算损失（使用重要性采样权重）
-            # 手动实现Huber损失，兼容所有PyTorch版本
+            # Calculate loss (using importance sampling weights)
+            # Manually implement Huber loss, compatible with all PyTorch versions
             diff = current_q - target_q
             abs_diff = torch.abs(diff)
             quadratic = torch.clamp(abs_diff, max=1.0)
@@ -368,25 +368,25 @@ class RainbowDQN:
             weighted_loss = (loss * weights).mean()
             total_loss += weighted_loss
         
-        # 反向传播
+        # Backward propagation
         self.optimizer.zero_grad()
         total_loss.backward()
         
-        # 梯度裁剪
+        # Gradient clipping
         torch.nn.utils.clip_grad_norm_(self.shared_backbone.parameters(), max_norm=1.0)
         torch.nn.utils.clip_grad_norm_(self.q_branches.parameters(), max_norm=1.0)
         
         self.optimizer.step()
         self.scheduler.step()
         
-        # 更新优先级
-        priorities = total_loss.item() + 1e-6  # 避免优先级为0
+        # Update priorities
+        priorities = total_loss.item() + 1e-6  # Avoid priority being 0
         self.memory.update_priorities(indices, [priorities] * len(indices))
         
         return total_loss.item()
     
     def update_target_network(self, tau):
-        # 软更新目标网络
+        # Soft update target network
         for target_param, param in zip(self.target_shared_backbone.parameters(), self.shared_backbone.parameters()):
             target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
         
@@ -395,7 +395,7 @@ class RainbowDQN:
                 target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
     
     def reset_noise(self):
-        # 重置所有噪声网络的噪声（如果使用了NoisyLinear）
+        # Reset noise for all noisy networks (if NoisyLinear is used)
         for branch in self.q_branches.values():
             for module in branch.modules():
                 if hasattr(module, 'reset_noise'):
@@ -421,7 +421,7 @@ class RainbowDQN:
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.scheduler.load_state_dict(checkpoint['scheduler'])
 
-# ==================== 训练主循环 ====================
+# ==================== Training Main Loop ====================
 if __name__ == "__main__":
     env = HomeEnergyManagementEnv()
     env.seed(0)
@@ -450,10 +450,10 @@ if __name__ == "__main__":
     
     if USE_STATE_NORMALIZATION:
         running_stats = RunningStats(shape=state_dim)
-        print("状态归一化已启用")
+        print("State normalization enabled")
     else:
         running_stats = None
-        print("状态归一化已禁用")
+        print("State normalization disabled")
     
     state_keys = sorted(env.state_space.keys())
     num_episodes = 5000
@@ -525,7 +525,7 @@ if __name__ == "__main__":
                 state = next_state
                 step_count += 1
                 
-                # 约束统计
+                # Constraint statistics
                 ess_soc = state['ess_state'] / env.ess_capacity
                 ev_soc = state['ev_battery_state'] / env.ev_capacity
                 episode_ess_socs.append(ess_soc)
@@ -538,7 +538,7 @@ if __name__ == "__main__":
                 episode_ess_violations += ess_violation
                 episode_ev_violations += ev_violation
                 
-                # 经济与舒适度
+                # Economics and comfort
                 episode_energy_costs.append(env.current_step_cost)
                 
                 indoor_temp1 = env.indoor_temp
@@ -575,25 +575,25 @@ if __name__ == "__main__":
                 if done:
                     break
             
-            # 更新running_stats
+            # Update running_stats
             if USE_STATE_NORMALIZATION and running_stats is not None and episode_states:
                 states_tensor = torch.tensor(episode_states, dtype=torch.float32, device=device)
                 running_stats.update(states_tensor)
             
-            # Rainbow DQN参数更新
+            # Rainbow DQN parameter update
             loss = agent.update()
             
-            # 定期更新目标网络和重置噪声
+            # Periodically update target network and reset noise
             if episode % 10 == 0:
                 agent.update_target_network(agent.tau)
                 agent.reset_noise()
             
-            # 记录episode成本
+            # Record episode cost
             env.episode_costs.append(env.total_cost)
             
             episode_returns.append(episode_return)
             
-            # 计算统计指标
+            # Calculate statistical metrics
             ess_violation_rate = episode_ess_violations / step_count if step_count > 0 else 0
             ev_violation_rate = episode_ev_violations / step_count if step_count > 0 else 0
             total_violation_rate = (ess_violation_rate + ev_violation_rate) / 2 if step_count > 0 else 0
@@ -616,7 +616,7 @@ if __name__ == "__main__":
             print(f"Episode {episode + 1}, Return: {episode_return:.2f}, Loss: {loss:.4f}, "
                   f"Violation: {total_violation_rate:.3f}, Cost: {energy_cost:.2f}, LR: {current_lr:.6f}")
         
-        # 保存模型
+        # Save model
         model_save_dir = "model/saved_models"
         os.makedirs(model_save_dir, exist_ok=True)
         model_filename = os.path.join(model_save_dir, f"rainbow_dqn_model_{timestamp}{norm_suffix}.pth")
@@ -643,17 +643,17 @@ if __name__ == "__main__":
             }
         }
         
-        # 如果使用了状态归一化，保存running_stats
+        # If state normalization is used, save running_stats
         if USE_STATE_NORMALIZATION and running_stats is not None:
             model_save_dict['running_stats_mean'] = running_stats.mean
             model_save_dict['running_stats_std'] = running_stats.std
             model_save_dict['running_stats_count'] = running_stats.count
         
         torch.save(model_save_dict, model_filename)
-        print(f"Rainbow DQN模型已保存到: {model_filename}")
+        print(f"Rainbow DQN model saved to: {model_filename}")
     
     env.save_episode_costs()
     env.visualize()
     env.plot_reward_components()
     plot_returns(episode_returns)
-    print(f"Rainbow DQN训练完成！Returns数据已保存到: {csv_filename}")
+    print(f"Rainbow DQN training completed! Returns data saved to: {csv_filename}")

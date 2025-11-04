@@ -1,53 +1,53 @@
-# HEMS项目评估模块
+# HEMS Project Evaluation Module
 
-这个文件夹包含了所有与模型评估、结果分析和可视化相关的文件。
+This folder contains all files related to model evaluation, result analysis, and visualization.
 
-## 文件结构
+## File Structure
 
-### 核心评估文件
-- `strategy_carbon_comparison.py` - 算法策略碳排放对比实验
-- `carbon_comparison_experiment.py` - 碳排放对比实验（设备配置对比）  
-- `model_evaluation.py` - 模型性能评估
-- `seasonal_evaluation.py` - 季节性评估
+### Core Evaluation Files
+- `strategy_carbon_comparison.py` - Algorithm strategy carbon emission comparison experiments
+- `carbon_comparison_experiment.py` - Carbon emission comparison experiments (device configuration comparison)
+- `model_evaluation.py` - Model performance evaluation
+- `seasonal_evaluation.py` - Seasonal evaluation
 
-### 绘图和可视化
-- `plot_ablation_results.py` - 消融研究结果绘图
-- `plot_advanced_compare.py` - 高级对比分析绘图
-- `plot_from_csv.py` - 从CSV数据绘图
-- `plot_xiaorong.py` - 特定分析绘图
-- `plt.py` - 通用绘图工具
-- `show_environment_plots.py` - 环境状态可视化
+### Plotting and Visualization
+- `plot_ablation_results.py` - Ablation study result plotting
+- `plot_advanced_compare.py` - Advanced comparison analysis plotting
+- `plot_from_csv.py` - Plot from CSV data
+- `plot_xiaorong.py` - Specific analysis plotting
+- `plt.py` - General plotting utilities
+- `show_environment_plots.py` - Environment state visualization
 
-## 使用方法
+## Usage
 
-### 运行算法对比实验
+### Run Algorithm Comparison Experiments
 ```bash
 cd evaluation
 python strategy_carbon_comparison.py
 ```
 
-### 运行设备配置对比实验
+### Run Device Configuration Comparison Experiments
 ```bash
-cd evaluation  
+cd evaluation
 python carbon_comparison_experiment.py
 ```
 
-### 运行模型评估
+### Run Model Evaluation
 ```bash
 cd evaluation
 python model_evaluation.py
 ```
 
-## 路径说明
+## Path Configuration
 
-所有文件已经配置了正确的相对路径：
-- 模型文件：`../model/saved_models/`
-- 环境文件：`../environment.py`
-- 结果保存：`../results/`
-- 数据文件：`../data/`
+All files have been configured with correct relative paths:
+- Model files: `../model/saved_models/`
+- Environment file: `../environment.py`
+- Result saving: `../results/`
+- Data files: `../data/`
 
-## 输出说明
+## Output Description
 
-- 图片文件会保存在当前evaluation文件夹中
-- CSV结果文件会保存在项目根目录的`results/`文件夹中
-- 所有文件都带有时间戳以避免覆盖
+- Plot files are saved in the current evaluation folder
+- CSV result files are saved in the project root `results/` folder
+- All files include timestamps to avoid overwriting
